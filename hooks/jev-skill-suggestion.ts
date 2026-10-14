@@ -80,6 +80,8 @@ import {
   catalog,
   classifyText,
   commandLike,
+  configDirOf,
+  contextFree,
   decide,
   describeRerank,
   describeSetup,
@@ -113,6 +115,7 @@ import {
   suggestionBlock,
   syncedFileCandidates,
   trimListing,
+  underConfigDir,
   wideQuestions,
 } from './policy.ts'
 import type { Candidate, PolicyConfig, Provider, Rerank, Skill, Wide } from './policy.ts'
@@ -135,33 +138,48 @@ export const register: Register = (on, options) => {
   const flag = (key: string, fallback: boolean) =>
     typeof options[key] === 'boolean' ? (options[key] as boolean) : fallback
 
+  const forced = text('provider', 'auto')
+
   // TypeSafe's own API is preferred when both keys are set: it is the only
   // one that reports a calibrated confidence. `provider` forces one,
-  // including "builtin" to use neither.
-  const typesafeKey = text('typesafeApiKey', '')
-  const gatewayKey = text('gatewayApiKey', '')
-  const forced = text('provider', 'auto')
-  const active: Provider | null = selectProvider(forced, typesafeKey, gatewayKey)
-
-  // Each backend keeps its own URL and model, so an override written for one
-  // can never be sent to the other when `auto` picks differently than expected.
-  const apiKey = active === 'typesafe' ? typesafeKey : active === 'gateway' ? gatewayKey : ''
-  const modelId = !active
-    ? ''
-    : active === 'typesafe'
-      ? text('typesafeModel', DEFAULT_MODEL.typesafe)
-      : text('gatewayModel', DEFAULT_MODEL.gateway)
-  const url = !active
-    ? ''
-    : active === 'typesafe'
-      ? endpoint('typesafe', text('typesafeBaseUrl', DEFAULT_BASE_URL.typesafe))
-      : endpoint('gateway', text('gatewayBaseUrl', DEFAULT_BASE_URL.gateway))
+  // including "builtin" to use neither. A key option wins; with none, the
+  // key's environment variable (TYPESAFE_API_KEY, AI_GATEWAY_API_KEY) is
+  // read at the first hook, since only `$` can read the environment; the
+  // first answer stands for the process.
+  type Backend = { active: Provider | null; apiKey: string; modelId: string; url: string }
+  let backend: Backend | null = null
+  const backendOf = (typesafeEnv: string | undefined, gatewayEnv: string | undefined): Backend => {
+    if (backend) return backend
+    const typesafeKey = text('typesafeApiKey', '') || (typesafeEnv ?? '').trim()
+    const gatewayKey = text('gatewayApiKey', '') || (gatewayEnv ?? '').trim()
+    const active = selectProvider(forced, typesafeKey, gatewayKey)
+    // Each backend keeps its own URL and model, so an override written for one
+    // can never be sent to the other when `auto` picks differently than expected.
+    backend = {
+      active,
+      apiKey: active === 'typesafe' ? typesafeKey : active === 'gateway' ? gatewayKey : '',
+      modelId: !active
+        ? ''
+        : active === 'typesafe'
+          ? text('typesafeModel', DEFAULT_MODEL.typesafe)
+          : text('gatewayModel', DEFAULT_MODEL.gateway),
+      url: !active
+        ? ''
+        : active === 'typesafe'
+          ? endpoint('typesafe', text('typesafeBaseUrl', DEFAULT_BASE_URL.typesafe))
+          : endpoint('gateway', text('gatewayBaseUrl', DEFAULT_BASE_URL.gateway)),
+    }
+    return backend
+  }
 
   // A backend named in the options but missing its key degrades to the
   // built-in classifier, which is silent; say so once, when a hook first runs.
-  let unusableReported = forced === 'auto' || forced === 'builtin' || active !== null
+  let unusableReported = forced === 'auto' || forced === 'builtin'
 
-  const hideListing = flag('hideListing', true)
+  // The listing stays by default: `name-only` overrides (what the setup
+  // writes) already take the descriptions out, and a listed name is what lets
+  // the model load a skill another skill names.
+  const hideListing = flag('hideListing', false)
   // "content": the mod reads the chosen skill's SKILL.md and attaches it, so
   // the skill loads even when the engine lists it as user-invocable-only or
   // off. "suggest": the cookbook's block alone, and the model loads the skill
@@ -172,6 +190,9 @@ export const register: Register = (on, options) => {
   const rerankEnabled = flag('rerank', true)
   const excerptChars = number('excerptChars', 700)
   const timeoutMs = number('timeoutMs', 800)
+  // The second request carries each shortlisted SKILL.md's opening and one
+  // question per candidate, so it gets its own, longer budget.
+  const rerankTimeoutMs = number('rerankTimeoutMs', 2500)
   const logDecisions = flag('logDecisions', true)
   const policy: PolicyConfig = {
     shortlist: Math.max(1, Math.round(number('shortlist', 3))),
@@ -211,6 +232,7 @@ export const register: Register = (on, options) => {
   on('prompt.attachment', { type: 'skill_listing' }, async ($, e, next) => {
     if (!announced) {
       announced = true
+      const { active, url } = backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
       if (logDecisions) {
         $.ui.log(`[jev-skill-suggestion] ${describeSetup(active, url, hideListing, forced === 'builtin')}`)
       }
@@ -219,11 +241,12 @@ export const register: Register = (on, options) => {
     const skills = parseListing(e.text)
     for (const skill of skills) listed.add(skill.name)
 
-    // With the mod loading skills itself, a listing that still names any is
-    // context the setup command would have saved: say so once.
-    if (injectContent && !hintedSetup && skills.length > 0 && !e.agentId) {
+    // A listed skill that still brings its whole description is context the
+    // setup command would trim to the name: say so once.
+    const described = skills.filter((skill) => skill.description).length
+    if (!hintedSetup && described > 0 && !e.agentId) {
       hintedSetup = true
-      if (logDecisions) $.ui.log(`[jev-skill-suggestion] ${describeStillListed(skills.length)}`)
+      if (logDecisions) $.ui.log(`[jev-skill-suggestion] ${describeStillListed(described)}`)
     }
 
     // A subagent's listing is not ours: nothing here suggests for a subagent,
@@ -248,6 +271,7 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     if (!announced) {
       announced = true
+      const { active, url } = backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
       if (logDecisions) {
         $.ui.log(`[jev-skill-suggestion] ${describeSetup(active, url, hideListing, forced === 'builtin')}`)
       }
@@ -255,15 +279,22 @@ export const register: Register = (on, options) => {
     suggested = null
 
     // Notifications and peer messages are not tasks; a typed `/name` already
-    // names its skill. Neither gets a suggestion.
+    // names its skill; "ok" or "繼續" carries no task the prompt alone shows.
+    // None of them gets a suggestion.
     if (!e.text.trim() || /^\/\S/.test(e.text.trim())) return next(e)
     if (e.origin && NOT_A_TASK.has(e.origin.kind)) return next(e)
+    if (contextFree(e.text)) {
+      if (logDecisions) $.ui.log('[jev-skill-suggestion] no suggestion: a reply with no task of its own')
+      return next(e)
+    }
+    const { active, apiKey, modelId, url } = backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
 
     /** One request to the active backend, or null on timeout, error or a non-2xx. */
     const ask = async (
       prompt: string,
       questions: Record<string, unknown>,
       what: string,
+      budgetMs: number,
     ): Promise<string | null> => {
       if (!active) return null
       try {
@@ -273,11 +304,11 @@ export const register: Register = (on, options) => {
             headers: requestHeaders(active, apiKey, modelId),
             body: requestBody(active, prompt, questions, modelId),
           }),
-          $.clock.sleep(timeoutMs),
+          $.clock.sleep(budgetMs),
         ])
         if (response && response.ok) return response.text
         if (response) $.ui.log(`[jev-skill-suggestion] ${active} responded ${response.status} to the ${what}`)
-        else $.ui.log(`[jev-skill-suggestion] ${what} passed ${timeoutMs}ms; no suggestion`)
+        else $.ui.log(`[jev-skill-suggestion] ${what} passed ${budgetMs}ms; no suggestion`)
       } catch (error) {
         $.ui.log(`[jev-skill-suggestion] ${what} failed: ${String(error)}`)
       }
@@ -294,12 +325,13 @@ export const register: Register = (on, options) => {
       let found: { path: string; markdown: string } | null = null
       try {
         const home = (await $.env.get('HOME')) ?? ''
+        const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
         const relative = skillFileCandidates(skill.name, plugin)
         // The engine reads the project's `.claude/` (the working directory
-        // only, not its ancestors) and the user's.
-        const candidates = [...relative, ...(home ? relative.map((file) => `${home}/${file}`) : [])]
-        if (plugin && home) {
-          const installed = `${home}/.claude/plugins/installed_plugins.json`
+        // only, not its ancestors) and the user's config dir.
+        const candidates = [...relative, ...(configDir ? relative.map((file) => underConfigDir(configDir, file)) : [])]
+        if (plugin && configDir) {
+          const installed = `${configDir}/plugins/installed_plugins.json`
           if (await $.fs.exists(installed)) {
             for (const path of installPathsOf(await $.fs.read(installed), plugin)) {
               candidates.push(...pluginFileCandidates(path, skill.name, plugin))
@@ -308,11 +340,11 @@ export const register: Register = (on, options) => {
         }
         // A claude.ai-synced skill sits under an account directory only
         // `$.fs.list` can name.
-        if (home) {
-          const synced = `${home}/.claude/skills/synced`
+        if (configDir) {
+          const synced = `${configDir}/skills/synced`
           if (await $.fs.exists(synced)) {
             const accounts = (await $.fs.list(synced)).filter((entry) => entry.kind === 'dir').map((entry) => entry.name)
-            candidates.push(...syncedFileCandidates(home, accounts, skill.name))
+            candidates.push(...syncedFileCandidates(configDir, accounts, skill.name))
           }
         }
         for (const file of candidates) {
@@ -331,7 +363,7 @@ export const register: Register = (on, options) => {
     const bodyOf = async (skill: Skill, plugin: string | undefined): Promise<string | null> =>
       (await fileOf(skill, plugin))?.markdown ?? null
 
-    if (!unusableReported) {
+    if (!unusableReported && !active) {
       unusableReported = true
       $.ui.log(`[jev-skill-suggestion] provider "${forced}" has no key set; using the built-in classifier`)
     }
@@ -341,8 +373,9 @@ export const register: Register = (on, options) => {
       commands = await $.command.list()
       if (!displayToId && commands.some((command) => !commandLike(command.name))) {
         const found: { dir: string; markdown: string }[] = []
-        for (const root of [await $.session.cwd(), (await $.env.get('HOME')) ?? '']) {
-          const dir = root && `${root}/.claude/skills`
+        const home = (await $.env.get('HOME')) ?? ''
+        const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
+        for (const dir of [`${await $.session.cwd()}/.claude/skills`, configDir && `${configDir}/skills`]) {
           if (!dir || !(await $.fs.exists(dir))) continue
           for (const entry of await $.fs.list(dir)) {
             const file = `${dir}/${entry.name}/SKILL.md`
@@ -357,8 +390,20 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     // Loading the skill itself, the mod is not bound to what the engine would
-    // list: a skill hidden with skillOverrides is still a candidate.
-    const skills = catalog(commands, injectContent ? new Set() : listed, neverSuggested)
+    // list, but a skill the person turned `off` stays off: the overrides are
+    // read from the user settings on every prompt, so an edit counts at once.
+    const off = new Set<string>()
+    try {
+      const configDir = configDirOf((await $.env.get('HOME')) ?? '~', await $.env.get('CLAUDE_CONFIG_DIR'))
+      const settingsPath = `${configDir}/settings.json`
+      if (await $.fs.exists(settingsPath)) {
+        const { skillOverrides } = readSkillSettings(await $.fs.read(settingsPath))
+        for (const [name, state] of Object.entries(skillOverrides)) if (state === 'off') off.add(name)
+      }
+    } catch (error) {
+      $.ui.log(`[jev-skill-suggestion] could not read the skill overrides: ${String(error)}`)
+    }
+    const skills = catalog(commands, injectContent ? new Set() : listed, new Set([...neverSuggested, ...off]))
     if (skills.length === 0) {
       if (logDecisions) $.ui.log('[jev-skill-suggestion] no candidate skills; nothing to suggest')
       return next(e)
@@ -369,7 +414,7 @@ export const register: Register = (on, options) => {
     const startedAt = await $.clock.now()
     let wide: Wide | null = null
     if (active) {
-      const answer = await ask(e.text, wideQuestions(active, skills), 'ranking')
+      const answer = await ask(e.text, wideQuestions(active, skills), 'ranking', timeoutMs)
       if (answer) wide = readWide(answer)
     } else {
       // No backend: the engine's own small-model classifier answers the same
@@ -412,7 +457,7 @@ export const register: Register = (on, options) => {
       if (candidates.length > 0) {
         const rerankStartedAt = await $.clock.now()
         rerankAttempted = true
-        const answer = await ask(e.text, rerankQuestions(active, candidates), 'rerank')
+        const answer = await ask(e.text, rerankQuestions(active, candidates), 'rerank', rerankTimeoutMs)
         if (answer) rerank = readRerank(answer)
         if (logDecisions) {
           const ms = (await $.clock.now()) - rerankStartedAt
@@ -464,6 +509,10 @@ export const register: Register = (on, options) => {
         )
       }
       if (file) injected.add(pick.name)
+    } else if (injectContent) {
+      // Content mode with nothing picked says nothing: "no skill is relevant"
+      // would talk the model out of loading one from the listing on its own.
+      block = null
     } else {
       block = suggestionBlock(pick, hideListing)
     }
@@ -499,8 +548,9 @@ export const register: Register = (on, options) => {
       commands = await $.command.list()
       if (!displayToId && commands.some((command) => !commandLike(command.name))) {
         const found: { dir: string; markdown: string }[] = []
-        for (const root of [await $.session.cwd(), (await $.env.get('HOME')) ?? '']) {
-          const dir = root && `${root}/.claude/skills`
+        const home = (await $.env.get('HOME')) ?? ''
+        const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
+        for (const dir of [`${await $.session.cwd()}/.claude/skills`, configDir && `${configDir}/skills`]) {
           if (!dir || !(await $.fs.exists(dir))) continue
           for (const entry of await $.fs.list(dir)) {
             const file = `${dir}/${entry.name}/SKILL.md`
@@ -514,9 +564,9 @@ export const register: Register = (on, options) => {
       $.ui.log(`[jev-skill-suggestion] setup: could not list the skills: ${String(error)}`)
       return next({ ...e, text: setupAborted(`the skills could not be listed (${String(error)})`) })
     }
-    const home = (await $.env.get('HOME')) ?? '~'
-    const settingsPath = `${home}/.claude/settings.json`
-    const backupPath = `${home}/.claude/jev-skill-suggestion.skill-overrides.backup.json`
+    const configDir = configDirOf((await $.env.get('HOME')) ?? '~', await $.env.get('CLAUDE_CONFIG_DIR'))
+    const settingsPath = `${configDir}/settings.json`
+    const backupPath = `${configDir}/jev-skill-suggestion.skill-overrides.backup.json`
     let json: string | null = null
     try {
       if (await $.fs.exists(settingsPath)) json = await $.fs.read(settingsPath)

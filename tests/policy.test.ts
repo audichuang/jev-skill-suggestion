@@ -41,6 +41,9 @@ import {
   frontmatterName,
   displayIds,
   canonical,
+  configDirOf,
+  contextFree,
+  underConfigDir,
   wideQuestions,
 } from '../hooks/policy.ts'
 import type { Candidate, PolicyConfig, Skill } from '../hooks/policy.ts'
@@ -290,6 +293,27 @@ test('the request carries the prompt as state and the model where each backend e
   expect(requestHeaders('typesafe', 'k', 'jev-latest').authorization).toBe('Bearer k')
 })
 
+test('the Gateway request names the protocol version, without which it is refused', () => {
+  expect(requestHeaders('gateway', 'k', 'typesafe-ai/jev')['ai-gateway-protocol-version']).toBe('0.0.1')
+  expect(requestHeaders('typesafe', 'k', 'jev-latest')['ai-gateway-protocol-version']).toBeUndefined()
+})
+
+test('a reply with no task of its own is told apart from a short task', () => {
+  for (const reply of ['ok', 'OK!', '  繼續 ', '好', '好的。', '2', '👍', 'go ahead', 'Thanks!', '做吧']) {
+    expect(contextFree(reply)).toBe(true)
+  }
+  for (const task of ['fix tests', 'go build', 'continue migration', '好 幫我 commit', '繼續修 login bug']) {
+    expect(contextFree(task)).toBe(false)
+  }
+})
+
+test('the user config dir follows CLAUDE_CONFIG_DIR, else ~/.claude', () => {
+  expect(configDirOf('/home/u', undefined)).toBe('/home/u/.claude')
+  expect(configDirOf('/home/u', '  ')).toBe('/home/u/.claude')
+  expect(configDirOf('/home/u', '/cfg/claude/')).toBe('/cfg/claude')
+  expect(underConfigDir('/cfg/claude', '.claude/skills/commit/SKILL.md')).toBe('/cfg/claude/skills/commit/SKILL.md')
+})
+
 test('provider selection prefers TypeSafe, and a forced backend without its key is null', () => {
   expect(selectProvider('auto', 'ts', 'gw')).toBe('typesafe')
   expect(selectProvider('auto', '', 'gw')).toBe('gateway')
@@ -341,7 +365,7 @@ test("the injection block carries the skill's body with its frontmatter off and 
   expect(block).toContain('<skill name="pptx" dir="/home/u/.claude/skills/pptx">')
   expect(block).toContain('Run /home/u/.claude/skills/pptx/scripts/build.py in /work/app.')
   expect(block).not.toContain('name: pptx')
-  expect(block).toContain('Do not load it with the Skill tool')
+  expect(block).toContain('Do not load it again with the Skill tool')
   expect(block.endsWith('</skill_relevance>')).toBe(true)
 })
 
@@ -356,12 +380,12 @@ test('an already-injected skill is only named again, and one without a file is s
 })
 
 test('a synced skill is looked for under every account directory, by its unprefixed name', () => {
-  expect(syncedFileCandidates('/home/u', ['acc_1', 'acc_2'], 'anthropic-skills:pptx')).toEqual([
+  expect(syncedFileCandidates('/home/u/.claude', ['acc_1', 'acc_2'], 'anthropic-skills:pptx')).toEqual([
     '/home/u/.claude/skills/synced/acc_1/pptx/SKILL.md',
     '/home/u/.claude/skills/synced/acc_2/pptx/SKILL.md',
   ])
-  expect(syncedFileCandidates('/home/u', ['../etc'], 'pptx')).toEqual([])
-  expect(syncedFileCandidates('/home/u', ['acc'], 'a/b')).toEqual([])
+  expect(syncedFileCandidates('/home/u/.claude', ['../etc'], 'pptx')).toEqual([])
+  expect(syncedFileCandidates('/home/u/.claude', ['acc'], 'a/b')).toEqual([])
 })
 
 test('the skill settings read the two fields the setup touches, and malformed JSON reads as empty', () => {
@@ -371,43 +395,49 @@ test('the skill settings read the two fields the setup touches, and malformed JS
   expect(readSkillSettings(null)).toEqual({ skillOverrides: {}, disableBundledSkills: undefined })
 })
 
-test('the setup plan hides user skills still on, leaves hidden ones, and reports plugin skills as locked', () => {
+test('the setup plan trims user and project skills still on, leaves trimmed ones, and reports plugin skills as locked', () => {
   const commands = [
     { name: 'help', source: 'builtin' },
     { name: 'pptx', source: 'user' },
     { name: 'commit', source: 'user' },
     { name: 'deploy', source: 'user' },
+    { name: 'review', source: 'user' },
+    { name: 'lab-db', source: 'project' },
     { name: 'eng:debug', source: 'plugin' },
     { name: 'pptx', source: 'user' },
     { name: SETUP_COMMAND, source: 'plugin' },
   ]
   const plan = setupPlan(
     commands,
-    { skillOverrides: { commit: 'user-invocable-only', deploy: 'off' }, disableBundledSkills: undefined },
+    { skillOverrides: { commit: 'user-invocable-only', deploy: 'off', review: 'name-only' }, disableBundledSkills: undefined },
     new Set([SETUP_COMMAND]),
   )
-  expect(plan).toEqual({ hide: ['pptx'], alreadyHidden: ['commit', 'deploy'], locked: ['eng:debug'], bundledStillOn: true })
+  expect(plan).toEqual({ hide: ['pptx', 'lab-db'], alreadyHidden: ['commit', 'deploy', 'review'], locked: ['eng:debug'] })
 })
 
 test('the setup instructions list every skill, carry the exact edit and the backup, and demand a yes first', () => {
-  const settings = { skillOverrides: { commit: 'name-only' }, disableBundledSkills: undefined }
-  const plan = setupPlan([{ name: 'pptx', source: 'user' }, { name: 'commit', source: 'user' }, { name: 'eng:debug', source: 'plugin' }], settings, new Set())
+  const settings = { skillOverrides: { commit: 'off' }, disableBundledSkills: undefined }
+  const plan = setupPlan([{ name: 'pptx', source: 'user' }, { name: 'deploy', source: 'user' }, { name: 'commit', source: 'user' }, { name: 'eng:debug', source: 'plugin' }], settings, new Set())
   const text = setupInstructions('apply', plan, settings, '/home/u/.claude/settings.json', '/home/u/.claude/backup.json')
-  expect(text).toContain('Skills that will be hidden from the model (2):\n- pptx\n- commit')
+  expect(text).toContain('Skills that will be listed by name only (2):\n- pptx\n- deploy')
   expect(text).toContain('- eng:debug')
   expect(text).toContain('Do not edit anything before a clear yes.')
-  expect(text).toContain('"pptx": "user-invocable-only"')
-  expect(text).toContain('"commit": "user-invocable-only"')
-  expect(text).toContain('"disableBundledSkills": true')
+  expect(text).toContain('"pptx": "name-only"')
+  expect(text).toContain('"deploy": "name-only"')
+  // An off skill stays off, and the bundled skills are never touched.
+  expect(text).toContain('"commit": "off"')
+  expect(text).not.toContain('user-invocable-only')
+  expect(text).not.toContain('"disableBundledSkills": true')
+  expect(text).toContain('bundled skills (simplify, loop, init, ...) are left as they are')
   // The backup keeps what was there, so restore can put it back.
-  expect(text).toContain('"commit": "name-only"')
   expect(text).toContain('"disableBundledSkills": null')
   expect(text).toContain(`/${SETUP_COMMAND} restore`)
   const restore = setupInstructions('restore', plan, settings, '/s.json', '/b.json')
   expect(restore).toContain('Read /b.json')
   expect(restore).toContain('Only after a clear yes')
-  expect(restore).toContain('rm ~/.claude/jev-skill-suggestion.skill-overrides.backup.json')
-  expect(describeStillListed(1)).toContain('1 skill is still listed')
+  expect(restore).toContain('rm "/b.json"')
+  expect(restore).toContain('Leave "disableBundledSkills" as it is')
+  expect(describeStillListed(1)).toContain('1 skill is still listed with a full description')
   expect(describeStillListed(13)).toContain(`run /${SETUP_COMMAND}`)
 })
 
@@ -429,7 +459,7 @@ test("a skill named with spaces in its frontmatter is mapped to its directory, w
 })
 
 test('a rerun of the setup leaves an existing backup alone, since only it holds the pre-setup values', () => {
-  const settings = { skillOverrides: { pptx: 'user-invocable-only' }, disableBundledSkills: true }
+  const settings = { skillOverrides: { pptx: 'name-only' }, disableBundledSkills: true }
   const plan = setupPlan([{ name: 'pptx', source: 'user' }, { name: 'new', source: 'user' }], settings, new Set())
   const fresh = setupInstructions('apply', plan, settings, '/s.json', '/b.json', false)
   expect(fresh).toContain('first write /b.json with exactly this content')
@@ -437,7 +467,7 @@ test('a rerun of the setup leaves an existing backup alone, since only it holds 
   expect(rerun).toContain('/b.json already exists from an earlier run')
   expect(rerun).toContain('do NOT overwrite')
   expect(rerun).not.toContain('first write /b.json')
-  expect(rerun).toContain('"new": "user-invocable-only"')
+  expect(rerun).toContain('"new": "name-only"')
 })
 
 test('a path with replacement-pattern characters goes into the injected body verbatim', () => {

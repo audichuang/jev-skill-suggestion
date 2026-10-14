@@ -1,12 +1,12 @@
 {
   "name": "jev-skill-suggestion",
-  "version": "0.1.0",
-  "description": "Keeps the skill listing out of the context window and lets TypeSafe's Jev, a System One decision model, pick at most one skill per prompt from the skills' descriptions, the way TypeSafe's skill-suggestion cookbook does: one request ranks every skill and asks whether the prompt needs a skill at all, a second re-reads the top three with their SKILL.md and can reject them all. The winner's SKILL.md is attached to the prompt, so the skills can be hidden from the model altogether (/jev-skill-suggestion:setup makes them user-invocable-only and /context counts them at 0). Falls back to the engine's built-in classifier when no key is set.",
+  "version": "0.2.0",
+  "description": "Keeps the skill listing out of the context window and lets TypeSafe's Jev, a System One decision model, pick at most one skill per prompt from the skills' descriptions, the way TypeSafe's skill-suggestion cookbook does: one request ranks every skill and asks whether the prompt needs a skill at all, a second re-reads the top three with their SKILL.md and can reject them all. The winner's SKILL.md is attached to the prompt, and /jev-skill-suggestion:setup lists every skill by name only, so the model can still load any of them, including one skill that names another. Falls back to the engine's built-in classifier when no key is set.",
   "author": {
-    "name": "claude-code-templates",
-    "url": "https://www.aitmpl.com"
+    "name": "audichuang",
+    "url": "https://github.com/audichuang"
   },
-  "repository": "https://github.com/davila7/claude-code-templates",
+  "repository": "https://github.com/audichuang/jev-skill-suggestion",
   "license": "MIT",
   "keywords": [
     "mod",
@@ -19,14 +19,14 @@
     "typesafeApiKey": {
       "type": "string",
       "title": "TypeSafe API key",
-      "description": "Key for TypeSafe's own API; preferred over the Gateway, since only it reports a calibrated confidence",
+      "description": "Key for TypeSafe's own API; preferred over the Gateway, since only it reports a calibrated confidence; empty reads the TYPESAFE_API_KEY environment variable",
       "default": "",
       "sensitive": true
     },
     "gatewayApiKey": {
       "type": "string",
       "title": "Vercel AI Gateway API key",
-      "description": "Key for the AI Gateway; with none set the engine's built-in classifier is used instead",
+      "description": "Key for the AI Gateway; with none set the engine's built-in classifier is used instead; empty reads the AI_GATEWAY_API_KEY environment variable",
       "default": "",
       "sensitive": true
     },
@@ -79,8 +79,8 @@
     "hideListing": {
       "type": "boolean",
       "title": "Hide the skill listing",
-      "description": "Leave the engine's skill listing out of the main conversation's context; off keeps the listing and only adds the suggestion",
-      "default": true
+      "description": "Leave the engine's skill listing out of the main conversation's context. Off (the default) keeps the listing, which name-only overrides already trim to names, so the model can still load a skill another skill names",
+      "default": false
     },
     "rerank": {
       "type": "boolean",
@@ -126,9 +126,15 @@
     },
     "timeoutMs": {
       "type": "number",
-      "title": "Latency budget (ms)",
-      "description": "How long to wait for a decision before letting the prompt through without a suggestion",
+      "title": "Ranking latency budget (ms)",
+      "description": "How long to wait for the first request (the ranking) before letting the prompt through without a suggestion",
       "default": 800
+    },
+    "rerankTimeoutMs": {
+      "type": "number",
+      "title": "Rerank latency budget (ms)",
+      "description": "How long to wait for the second request, which reads each shortlisted SKILL.md, before suggesting nothing",
+      "default": 2500
     },
     "logDecisions": {
       "type": "boolean",
