@@ -243,7 +243,10 @@ export const register: Register = (on, options) => {
 
     // A listed skill that still brings its whole description is context the
     // setup command would trim to the name: say so once.
-    const described = skills.filter((skill) => skill.description).length
+    // ponytail: a `prefix:name` is taken for a plugin's skill, which
+    // skillOverrides cannot trim; read `$.command.list()` sources if a
+    // colon-named user skill ever shows up.
+    const described = skills.filter((skill) => skill.description && !skill.name.includes(':')).length
     if (!hintedSetup && described > 0 && !e.agentId) {
       hintedSetup = true
       if (logDecisions) $.ui.log(`[jev-skill-suggestion] ${describeStillListed(described)}`)

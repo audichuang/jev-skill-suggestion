@@ -1,5 +1,5 @@
 {
-  "description": "Withholds the engine's skill listing at prompt.attachment and, at prompt.submit, runs TypeSafe's two-request skill suggestion (rank every skill + gate nouls, then re-read the top three with their SKILL.md + one fits noul each) or the built-in classifier, attaching the one winner as a <skill_relevance> block for the Skill tool.",
+  "description": "At prompt.submit, runs TypeSafe's two-request skill suggestion (rank every skill + gate nouls, then re-read the top three with their SKILL.md + one fits noul each) or the built-in classifier, and attaches the one winner's SKILL.md as a <skill_relevance> block. The engine's skill listing stays in place unless hideListing is on, so every skill remains loadable by name.",
   "modules": [
     "./jev-skill-suggestion.ts"
   ]
