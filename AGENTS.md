@@ -1,0 +1,32 @@
+# jev-skill-suggestion
+
+Claude Code mod（hooks module plugin），fork 自 davila7/claude-code-templates 的同名 mod。README 寫給安裝的人；這份寫給改 code 的 agent。
+
+## 改完必跑
+
+- `claude plugin test .` 與 `claude plugin validate .`。不要用 `bun test`：`claude-code/testing` 只有 `claude plugin test` 提供。
+- 改到 hook 行為時做實機驗證：push 後跑 `claude plugin marketplace update jev-skill-suggestion && claude plugin update jev-skill-suggestion@jev-skill-suggestion`，再用 `claude --debug -p '<需要某個 skill 的任務>'` 開一個 session，到 `~/.claude/debug/` 最新的檔案裡找 `ready on typesafe` 和 `suggesting /…`。headless 模式下 log 只寫進 debug 檔。
+
+## 不可退回的設計
+
+- setup 只寫 `name-only`。不要寫 `user-invocable-only`，也不要碰 `disableBundledSkills`：前者會讓 Skill tool 拒絕載入，skill 接 skill 會斷、子代理也載不到；後者會讓內建 skill 整批消失（上游 #1013，也就是開這個 fork 的原因）。
+- `hideListing` 預設 `false`。content 模式沒挑到 skill 時不附任何文字，讓模型自己從清單挑。
+- 所有失敗路徑都 fail-open：逾時、非 2xx、例外都只是不給建議，mod 絕不能擋住 prompt。
+- plugin 名稱 `jev-skill-suggestion` 不改：使用者 `pluginConfigs` 的 key 是 `<name>@<載入來源>`，改名會讓所有人的設定失效。
+
+## 程式分工
+
+- `hooks/policy.ts` 放純邏輯，不呼叫 `$`、不做 I/O，單元測試都針對它寫。`hooks/jev-skill-suggestion.ts` 只負責 `$` 呼叫和事件串接。新邏輯照這個切法放。
+- hook 層的測試在 `tests/hooks.test.ts`，用假的 `$` 呼叫 `register()`，照現有的 `seat()` 寫法擴充。
+
+## mod API 的雷
+
+- `$.env.get('NAME')` 的參數必須是字面字串，傳變數 validator 會擋下來。`register(on, options)` 是同步函式，環境變數只能在第一個 hook 裡讀。
+- `skill.prompt` 事件沒有 `agentId`，分不出主對話和子代理，不要拿它做注入去重。
+- options 只從 user、`--settings`、managed 三種 settings 讀，不讀專案 settings。
+
+## 上游與發版
+
+- 上游原版在 tag `upstream-55457cf`。用 `git diff upstream-55457cf -- hooks/` 看本 fork 偏離了哪些地方。改到使用者看得到的行為時，README 的「What changed from upstream」表要一起更新。
+- 要讓使用者拿到的改動，`.claude-plugin/plugin.json` 和 `.claude-plugin/marketplace.json` 的 `version` 一起升。安裝快取依版本號分目錄，不升版的話 `claude plugin update` 可能拿不到新程式。
+- 測試只用假 key。真的 key 在使用者的 `TYPESAFE_API_KEY` 環境變數裡，不能進 repo。
