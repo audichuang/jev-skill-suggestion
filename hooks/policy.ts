@@ -479,14 +479,49 @@ export function rerankQuestions(
   return questions
 }
 
+/** The turn before the request, as the decision model reads it beside the request. */
+export interface RecentContext {
+  previous_user_message: string
+  assistant_reply: string
+}
+
+/**
+ * The turn before `current` in a transcript: the last user message before it
+ * and the assistant's last reply, each cut short, or null when there is none.
+ * A follow-up such as "查無資料ㄟ 為什麼？？" carries its task in that turn, and
+ * the decision model otherwise reads the request alone. Mid-turn (find_skill),
+ * `current` is null: the context is the prompt being worked on and the reply
+ * so far.
+ */
+export function recentContextOf(
+  messages: readonly { role: 'user' | 'assistant'; text: string }[],
+  current: string | null,
+): RecentContext | null {
+  let end = messages.length
+  // The prompt being decided may already be in the transcript.
+  const last = messages[end - 1]
+  if (current !== null && last?.role === 'user' && last.text.trim() === current.trim()) end--
+  let reply = ''
+  let user = ''
+  for (let i = end - 1; i >= 0 && !user; i--) {
+    const message = messages[i] as { role: 'user' | 'assistant'; text: string }
+    if (!message.text.trim()) continue
+    if (message.role === 'assistant' && !reply) reply = message.text.trim()
+    else if (message.role === 'user') user = message.text.trim()
+  }
+  if (!user && !reply) return null
+  return { previous_user_message: user.slice(0, 400), assistant_reply: reply.slice(-600) }
+}
+
 /** A request body. The Gateway carries the model in a header instead. */
 export function requestBody(
   provider: Provider,
   prompt: string,
   questions: Record<string, unknown>,
   model: string,
+  context: RecentContext | null = null,
 ): string {
-  const state = { request: prompt, recent_context: '' }
+  const state = { request: prompt, recent_context: context ?? '' }
   const body = provider === 'typesafe' ? { model, state, questions } : { state, questions }
   return JSON.stringify(body)
 }
@@ -767,8 +802,9 @@ export const FIND_SKILL_TOOL = {
   description:
     'Finds which installed skill fits a sub-task. The skill listing names most skills without a description; ' +
     'this tool reads their descriptions and SKILL.md and answers with at most one skill, to load with the Skill tool, or none. ' +
-    'Useful when a new sub-task starts partway through the work (the next step of a plan, a new kind of file, tool or service) ' +
-    'and no skill already loaded covers it. Pass the sub-task in one sentence.',
+    'Call it when a new sub-task starts partway through the work (the next step of a plan, a new kind of file, tool or service), ' +
+    'and before you hand the user something whose shape a team may have rules for: a query or command for them to run, ' +
+    'a document, a diagram, a config. Skip it when a loaded skill already covers the step. Pass the sub-task in one sentence.',
   inputSchema: {
     type: 'object',
     properties: { task: { type: 'string', description: 'The sub-task, in one sentence.' } },
@@ -787,6 +823,8 @@ export interface Decision {
   /** Where the text came from: the person's prompt, or the model's find_skill. */
   source: 'prompt' | 'find_skill'
   text: string
+  /** The turn before, as sent beside the text. */
+  context: RecentContext | null
   wide: Wide | null
   rerank: Rerank | null
   pick: string | null
@@ -937,7 +975,7 @@ export const SETUP_STATE = 'name-only'
 const TRIMMED = new Set(['name-only', 'user-invocable-only', 'off'])
 
 export interface SetupPlan {
-  /** User and project skills the setup lists by name only (`name-only`). */
+  /** User skills the setup lists by name only (`name-only`). */
   hide: string[]
   /** Of those, the ones already name-only, user-invocable-only or off: nothing to change. */
   alreadyHidden: string[]
@@ -963,7 +1001,9 @@ export function setupPlan(
     if (seen.has(command.name) || excluded.has(command.name)) continue
     seen.add(command.name)
     if (command.source === 'plugin') locked.push(command.name)
-    else if (command.source === 'user' || command.source === 'project') {
+    // A project's own skills are few and the ones that project needs most:
+    // they keep their descriptions, and the person decides how many there are.
+    else if (command.source === 'user') {
       const state = settings.skillOverrides[command.name] ?? 'on'
       if (TRIMMED.has(state)) alreadyHidden.push(command.name)
       else hide.push(command.name)

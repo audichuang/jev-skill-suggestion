@@ -58,7 +58,7 @@ Two things to know about a key stored as an option. Claude Code reads a plaintex
 
 With no key at all, the mod falls back to Claude Code's built-in classifier: one request, no gate, no rerank, and no time limit.
 
-**Trim the listing (optional).** Run `/jev-skill-suggestion:setup`. It shows the user and project skills it will set to `name-only` and asks before it edits anything. It writes the old values to `jev-skill-suggestion.skill-overrides.backup.json` next to your settings. `/jev-skill-suggestion:setup restore` puts them back. Skills that are already `name-only`, `user-invocable-only` or `off` stay as they are. Plugin skills cannot be trimmed this way.
+**Trim the listing (optional).** Run `/jev-skill-suggestion:setup`. It shows the user skills it will set to `name-only` and asks before it edits anything. It writes the old values to `jev-skill-suggestion.skill-overrides.backup.json` next to your settings. `/jev-skill-suggestion:setup restore` puts them back. Skills that are already `name-only`, `user-invocable-only` or `off` stay as they are. Plugin skills cannot be trimmed this way. Project skills (`.claude/skills` in the project) are left with their descriptions: they are the few that project needs most, and you choose how many there are. An earlier version did trim them; to give them back their descriptions, delete their entries from `skillOverrides`.
 
 Restart Claude Code after either step.
 
@@ -223,6 +223,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
   findSkill:        boolean give the model the find_skill tool for mid-turn sub-tasks (default true; needs a key and rerank on)
   logDecisions:     boolean log each decision (default true)
   recordDecisions:  boolean keep every decision in a file per session (default true)
+  sendRecentContext: boolean send the previous user message and the end of the last reply with the request (default true)
 ```
 
 ## What changed from upstream
@@ -234,13 +235,14 @@ With a key set, the prompt text and every candidate skill's name and one-line de
 | Content mode attaches nothing when nothing is picked. Upstream attached "No skill in the roster appears relevant", which talked the model out of loading one itself. | — |
 | A key can come from `TYPESAFE_API_KEY` / `AI_GATEWAY_API_KEY`. | [#954](https://github.com/davila7/claude-code-templates/pull/954) (closed upstream) |
 | Gateway requests send `ai-gateway-protocol-version`. | [#1123](https://github.com/davila7/claude-code-templates/issues/1123) |
-| Setup also trims project skills. | #1123 |
+| Setup trims user skills only: a project's own skills keep their descriptions, so the person decides how much of the listing they take. Upstream trims project skills too. | #1123 |
 | The rerank request gets its own budget, `rerankTimeoutMs`, default 2500 ms. | [#962](https://github.com/davila7/claude-code-templates/issues/962) |
 | Settings, skills, plugin records and the backup follow `CLAUDE_CONFIG_DIR`. | [#1042](https://github.com/davila7/claude-code-templates/pull/1042) |
 | Replies with no task of their own (`ok`, `2`, `繼續`) are not ranked. | [#1081](https://github.com/davila7/claude-code-templates/pull/1081) |
 | Skills set to `off` are never injected. | — |
 | A `find_skill` tool lets the model ask Jev mid-turn, so a sub-task that turns up after the prompt is not left to a guess from bare names. | — |
 | Every decision, with the request text and the ranking, is kept in a file per session (`recordDecisions`), so a wrong pick can be read back. | — |
+| The turn before the request (the previous user message and the end of the assistant's last reply) goes in `recent_context`, which upstream always sends empty (`sendRecentContext`). | — |
 | A fourth gate question (`names_its_task`), a structured `fits` question, `fitsThreshold` 0.5 and the model pinned to `jev-1.14.0`, all measured with `evals/run.ts` (see `evals/README.md`). | Cookbook uses three gate nouls, `fits` 0.30 and `jev-latest` |
 
 To see upstream's later changes: `gh api "repos/davila7/claude-code-templates/commits?path=cli-tool/components/mods/productivity/jev-skill-suggestion"`, then diff the new upstream copy against the `upstream-*` tag.

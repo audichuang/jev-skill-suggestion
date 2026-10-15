@@ -18,6 +18,7 @@ function seat(
   const submit = hooks['prompt.submit'] as Hook<'prompt.submit'>
 
   const auth: string[] = []
+  const bodies: string[] = []
   const registered: string[] = []
   const files = world.files ?? {}
   const $ = {
@@ -25,6 +26,7 @@ function seat(
     http: {
       fetch: async (_url: string, init: { headers: Record<string, string>; body: string }) => {
         auth.push(init.headers.authorization as string)
+        bodies.push(init.body)
         if (world.down) return { ok: false, status: 503, text: '' }
         return {
           ok: true,
@@ -50,7 +52,14 @@ function seat(
       write: async (path: string, text: string) => void (files[path] = text),
     },
     env: { get: async (name: string) => (world.env ?? {})[name] },
-    session: { cwd: async () => '/work', id: async () => 's1' },
+    session: {
+      cwd: async () => '/work',
+      id: async () => 's1',
+      messages: async () => [
+        { role: 'user', text: 'the CI run is red', toolUses: [] },
+        { role: 'assistant', text: 'Three tests fail in parser.test.ts.', toolUses: [] },
+      ],
+    },
     tool: {
       register: async (spec: { name: string }) => (registered.push(spec.name), { tool: `mcp__jev__${spec.name}` }),
     },
@@ -73,7 +82,7 @@ function seat(
     )
   const load = (skill: string) =>
     (hooks['skill.prompt'] as Hook<'skill.prompt'>)($, { skill, text: '' } as unknown as SkillPromptInput, pass)
-  return { ask, auth, registered, start, describe, call, listing, load, files }
+  return { ask, auth, bodies, registered, start, describe, call, listing, load, files }
 }
 
 test('with no key option the key comes from TYPESAFE_API_KEY, and a bare go-ahead is never ranked', async () => {
@@ -174,4 +183,16 @@ test('every decision and every load goes to the session record file, appended to
   const off = seat({ typesafeApiKey: 'k', recordDecisions: false }, { env: { HOME: '/home/u' } })
   await off.ask('fix the failing tests')
   expect(Object.keys(off.files)).toEqual([])
+})
+
+test('the turn before goes beside the request, and sendRecentContext off leaves it empty', async () => {
+  const on = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
+  await on.ask('fix them')
+  expect(JSON.parse(on.bodies[0] as string).state.recent_context).toEqual({
+    previous_user_message: 'the CI run is red',
+    assistant_reply: 'Three tests fail in parser.test.ts.',
+  })
+  const off = seat({ typesafeApiKey: 'k', sendRecentContext: false }, { env: { HOME: '/home/u' } })
+  await off.ask('fix them')
+  expect(JSON.parse(off.bodies[0] as string).state.recent_context).toBe('')
 })

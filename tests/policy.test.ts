@@ -21,6 +21,7 @@ import {
   pluginFileCandidates,
   readRerank,
   readWide,
+  recentContextOf,
   rerankQuestions,
   requestBody,
   requestHeaders,
@@ -399,7 +400,7 @@ test('the skill settings read the two fields the setup touches, and malformed JS
   expect(readSkillSettings(null)).toEqual({ skillOverrides: {}, disableBundledSkills: undefined })
 })
 
-test('the setup plan trims user and project skills still on, leaves trimmed ones, and reports plugin skills as locked', () => {
+test('the setup plan trims user skills still on, leaves project skills and trimmed ones, and reports plugin skills as locked', () => {
   const commands = [
     { name: 'help', source: 'builtin' },
     { name: 'pptx', source: 'user' },
@@ -416,7 +417,7 @@ test('the setup plan trims user and project skills still on, leaves trimmed ones
     { skillOverrides: { commit: 'user-invocable-only', deploy: 'off', review: 'name-only' }, disableBundledSkills: undefined },
     new Set([SETUP_COMMAND]),
   )
-  expect(plan).toEqual({ hide: ['pptx', 'lab-db'], alreadyHidden: ['commit', 'deploy', 'review'], locked: ['eng:debug'] })
+  expect(plan).toEqual({ hide: ['pptx'], alreadyHidden: ['commit', 'deploy', 'review'], locked: ['eng:debug'] })
 })
 
 test('the setup instructions list every skill, carry the exact edit and the backup, and demand a yes first', () => {
@@ -507,4 +508,19 @@ test('findSkillResult names the pick with its description for the Skill tool, an
 test('the ranking can leave the gate out, and then the gate passes', () => {
   const questions = wideQuestions('typesafe', [{ name: 'a', description: 'A' }], { askGate: false })
   expect(Object.keys(questions)).toEqual(['which'])
+})
+
+test('the recent context is the turn before the prompt: the prompt itself is skipped, long text is cut', () => {
+  const messages = [
+    { role: 'user' as const, text: 'write the SQL' },
+    { role: 'assistant' as const, text: `${'x'.repeat(700)}SELECT 1` },
+    { role: 'user' as const, text: '查無資料ㄟ 為什麼？？' },
+  ]
+  const context = recentContextOf(messages, '查無資料ㄟ 為什麼？？')
+  expect(context?.previous_user_message).toBe('write the SQL')
+  expect(context?.assistant_reply.length).toBe(600)
+  expect(context?.assistant_reply.endsWith('SELECT 1')).toBe(true)
+  // Mid-turn, the prompt being worked on is the context.
+  expect(recentContextOf(messages, null)?.previous_user_message).toBe('查無資料ㄟ 為什麼？？')
+  expect(recentContextOf([], 'hi')).toBeNull()
 })

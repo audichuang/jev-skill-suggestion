@@ -114,6 +114,7 @@ import {
   readSkillSettings,
   modelInvocable,
   readWide,
+  recentContextOf,
   modelOf,
   recordLine,
   rerankQuestions,
@@ -132,7 +133,7 @@ import {
   underConfigDir,
   wideQuestions,
 } from './policy.ts'
-import type { Candidate, PolicyConfig, Provider, Rerank, Skill, Wide } from './policy.ts'
+import type { Candidate, PolicyConfig, Provider, RecentContext, Rerank, Skill, Wide } from './policy.ts'
 
 /** Prompt origins that are not a task of the person's: nothing to suggest for. */
 const NOT_A_TASK = new Set([
@@ -172,6 +173,7 @@ interface ChooseContext {
   readonly neverSuggested: ReadonlySet<string>
   readonly logDecisions: boolean
   readonly recordDecisions: boolean
+  readonly sendRecentContext: boolean
   readonly timeoutMs: number
   readonly rerankTimeoutMs: number
   readonly rerankEnabled: boolean
@@ -183,6 +185,17 @@ interface ChooseContext {
   displayToId: Map<string, string> | null
   /** Each session's record file as written so far, by session id. */
   records: Map<string, string>
+}
+
+/** The turn before `current` (null mid-turn), sent beside the request; null when off or unreadable. */
+async function contextFor($: EngineInterface, ctx: ChooseContext, current: string | null): Promise<RecentContext | null> {
+  if (!ctx.sendRecentContext) return null
+  try {
+    return recentContextOf(await $.session.messages(), current)
+  } catch (error) {
+    $.ui.log(`[jev-skill-suggestion] could not read the transcript: ${String(error)}`)
+    return null
+  }
 }
 
 /** A Choice's fields the record file keeps, beside the source, text and pick. */
@@ -255,7 +268,7 @@ async function choose(
   $: EngineInterface,
   ctx: ChooseContext,
   text: string,
-  { restrictTo, askGate }: { restrictTo: ReadonlySet<string>; askGate: boolean },
+  { restrictTo, askGate, context }: { restrictTo: ReadonlySet<string>; askGate: boolean; context: RecentContext | null },
 ): Promise<Choice | null> {
   const configDir = await configDirFor($)
   const { active, apiKey, modelId, url } = ctx.backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
@@ -273,7 +286,7 @@ async function choose(
         $.http.fetch(url, {
           method: 'POST',
           headers: requestHeaders(active, apiKey, modelId),
-          body: requestBody(active, prompt, questions, modelId),
+          body: requestBody(active, prompt, questions, modelId, context),
         }),
         $.clock.sleep(budgetMs),
       ])
@@ -517,6 +530,7 @@ export const register: Register = (on, options) => {
   const rerankTimeoutMs = number('rerankTimeoutMs', 2500)
   const logDecisions = flag('logDecisions', true)
   const recordDecisions = flag('recordDecisions', true)
+  const sendRecentContext = flag('sendRecentContext', true)
   const findSkill = flag('findSkill', true)
   const policy: PolicyConfig = {
     shortlist: Math.max(1, Math.round(number('shortlist', 3))),
@@ -553,6 +567,7 @@ export const register: Register = (on, options) => {
     neverSuggested,
     logDecisions,
     recordDecisions,
+    sendRecentContext,
     timeoutMs,
     rerankTimeoutMs,
     rerankEnabled,
@@ -635,10 +650,11 @@ export const register: Register = (on, options) => {
 
     // Content mode loads the skill itself, so it is not bound to what the
     // engine lists; "suggest" leaves loading to the Skill tool, which is.
-    const choice = await choose($, state, e.text, { restrictTo: injectContent ? new Set() : listed, askGate: true })
+    const context = await contextFor($, state, e.text)
+    const choice = await choose($, state, e.text, { restrictTo: injectContent ? new Set() : listed, askGate: true, context })
     if (!choice) return next(e)
     const { pick, file } = choice
-    await record($, state, { source: 'prompt', text: e.text, pick: pick?.name ?? null, ...traceOf(choice) })
+    await record($, state, { source: 'prompt', text: e.text, context, pick: pick?.name ?? null, ...traceOf(choice) })
     // A row in the transcript scrolls away; this line stays on screen.
     if (logDecisions) $.ui.status(describeStatus(pick?.name ?? null))
     if (logDecisions) {
@@ -725,9 +741,11 @@ export const register: Register = (on, options) => {
     // engine lists is offered; before the listing is seen, nothing is.
     let answer: Skill | null | 'unavailable' = 'unavailable'
     try {
-      const choice = task && listed.size > 0 ? await choose($, state, task, { restrictTo: listed, askGate: false }) : null
+      // A subagent's own conversation is not the session's transcript.
+      const context = e.agentId ? null : await contextFor($, state, null)
+      const choice = task && listed.size > 0 ? await choose($, state, task, { restrictTo: listed, askGate: false, context }) : null
       if (choice?.answered) answer = choice.pick
-      if (choice) await record($, state, { source: 'find_skill', text: task, pick: answer && answer !== 'unavailable' ? answer.name : null, ...traceOf(choice), ...(e.agentId ? { agentId: e.agentId } : {}) })
+      if (choice) await record($, state, { source: 'find_skill', text: task, context, pick: answer && answer !== 'unavailable' ? answer.name : null, ...traceOf(choice), ...(e.agentId ? { agentId: e.agentId } : {}) })
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] find_skill failed: ${String(error)}`)
     }

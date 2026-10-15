@@ -3,6 +3,7 @@
  * against the skills installed on this machine, and scores each pick.
  *
  *   bun evals/run.ts [--model jev-1.13.0] [--gate 0.3] [--fits 0.5] [--reverse] [--cases …]
+ *                    [--project ~/code/app] [--no-context]
  *
  * The requests are built by hooks/policy.ts, so a change to a question there
  * is what gets measured. Answers are cached by request body in
@@ -34,6 +35,7 @@ import {
   wideQuestions,
   type Candidate,
   type PolicyConfig,
+  type RecentContext,
   type Skill,
 } from '../hooks/policy.ts'
 
@@ -44,6 +46,10 @@ const arg = (name: string, fallback: string) => {
 const model = arg('model', DEFAULT_MODEL.typesafe)
 const casesPath = arg('cases', `${import.meta.dir}/cases.jsonl`)
 const reverse = process.argv.includes('--reverse')
+// A project whose `.claude/skills` joins the catalog, as it would in a session there.
+const project = arg('project', '')
+// Leave each case's `context` out, to see what the turn before adds.
+const noContext = process.argv.includes('--no-context')
 const apiKey = process.env.TYPESAFE_API_KEY ?? ''
 if (!apiKey) throw new Error('TYPESAFE_API_KEY is not set')
 const policy: PolicyConfig = {
@@ -69,6 +75,7 @@ const add = (name: string, file: string) => {
 }
 const skillDirs = (dir: string) =>
   existsSync(dir) ? readdirSync(dir).filter((entry) => existsSync(`${dir}/${entry}/SKILL.md`)) : []
+if (project) for (const entry of skillDirs(`${project}/.claude/skills`)) add(entry, `${project}/.claude/skills/${entry}/SKILL.md`)
 for (const entry of skillDirs(`${config}/skills`)) add(entry, `${config}/skills/${entry}/SKILL.md`)
 const installed = JSON.parse(readFileSync(`${config}/plugins/installed_plugins.json`, 'utf8')).plugins
 for (const [key, installs] of Object.entries(installed) as [string, { installPath: string }[]][]) {
@@ -84,8 +91,8 @@ const url = endpoint('typesafe', DEFAULT_BASE_URL.typesafe)
 const cacheDir = `${import.meta.dir}/.cache`
 mkdirSync(cacheDir, { recursive: true })
 let served = ''
-async function ask(prompt: string, questions: Record<string, unknown>): Promise<string> {
-  const body = requestBody('typesafe', prompt, questions, model)
+async function ask(prompt: string, questions: Record<string, unknown>, context: RecentContext | null): Promise<string> {
+  const body = requestBody('typesafe', prompt, questions, model, context)
   const cached = `${cacheDir}/${createHash('sha256').update(body).digest('hex')}.json`
   if (existsSync(cached)) return readFileSync(cached, 'utf8')
   const response = await fetch(url, { method: 'POST', headers: requestHeaders('typesafe', apiKey, model), body })
@@ -95,14 +102,15 @@ async function ask(prompt: string, questions: Record<string, unknown>): Promise<
   return text
 }
 
-type Case = { text: string; expect: (string | null)[]; note: string }
+type Case = { text: string; expect: (string | null)[]; note: string; context?: RecentContext }
 const cases: Case[] = readFileSync(casesPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
 const tally = { right: 0, wrongSkill: 0, falsePositive: 0, falseNegative: 0 }
 const gates: { want: boolean; gate: number | null; fits: number | null }[] = []
 const f2 = (n: number | null | undefined) => (typeof n === 'number' ? n.toFixed(2) : ' n/d')
 
 for (const c of cases) {
-  const wideAnswer = await ask(c.text, wideQuestions('typesafe', skills))
+  const context = noContext ? null : (c.context ?? null)
+  const wideAnswer = await ask(c.text, wideQuestions('typesafe', skills), context)
   served ||= modelOf(wideAnswer) ?? ''
   const wide = readWide(wideAnswer)
   let rerank = null
@@ -115,7 +123,7 @@ for (const c of cases) {
     }))
     if (candidates.length > 0) {
       rerankAttempted = true
-      rerank = readRerank(await ask(c.text, rerankQuestions('typesafe', candidates)))
+      rerank = readRerank(await ask(c.text, rerankQuestions('typesafe', candidates), context))
     }
   }
   const pick = decide(wide, rerank, offered, policy, rerankAttempted).name
