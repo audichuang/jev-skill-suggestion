@@ -423,7 +423,7 @@ export const GATE_QUESTIONS: Record<string, string> = {
 const INVERTED = new Set(['prose_suffices'])
 
 /** The same yes/no question under two names. */
-function yesNo(provider: Provider, instructions: unknown): Record<string, unknown> {
+function yesNo(provider: Provider, instructions: string | Record<string, unknown>): Record<string, unknown> {
   return { type: provider === 'typesafe' ? 'noul' : 'boolean', instructions }
 }
 
@@ -450,6 +450,19 @@ export function wideQuestions(
   return questions
 }
 
+/**
+ * Does this candidate do the thing asked? Structured instructions are
+ * TypeSafe's documented form; the Gateway's shape is read from its SDK, so it
+ * keeps the plain string.
+ */
+function fitsInstructions(provider: Provider, candidate: Candidate): string | Record<string, unknown> {
+  const description = candidate.description || candidate.detail
+  if (provider === 'gateway') {
+    return `Does the skill '${candidate.name}' do the specific thing the user's request asks for? It is described as: ${description}`
+  }
+  return { question: 'Does `skill` do the specific thing the request asks for?', skill: { name: candidate.name, description } }
+}
+
 /** The second request's `questions`: the shortlist re-read, one `fits` each. */
 export function rerankQuestions(
   provider: Provider,
@@ -466,15 +479,7 @@ export function rerankQuestions(
     },
   }
   for (const candidate of candidates) {
-    const description = candidate.description || candidate.detail
-    // Structured instructions are TypeSafe's documented form; the Gateway's
-    // shape is read from its SDK, so it keeps the plain string.
-    questions[`fits::${candidate.name}`] = yesNo(
-      provider,
-      provider === 'typesafe'
-        ? { question: 'Does `skill` do the specific thing the request asks for?', skill: { name: candidate.name, description } }
-        : `Does the skill '${candidate.name}' do the specific thing the user's request asks for? It is described as: ${description}`,
-    )
+    questions[`fits::${candidate.name}`] = yesNo(provider, fitsInstructions(provider, candidate))
   }
   return questions
 }
@@ -497,18 +502,13 @@ export function recentContextOf(
   messages: readonly { role: 'user' | 'assistant'; text: string }[],
   current: string | null,
 ): RecentContext | null {
-  let end = messages.length
+  const said = messages.filter((message) => message.text.trim())
   // The prompt being decided may already be in the transcript.
-  const last = messages[end - 1]
-  if (current !== null && last?.role === 'user' && last.text.trim() === current.trim()) end--
-  let reply = ''
-  let user = ''
-  for (let i = end - 1; i >= 0 && !user; i--) {
-    const message = messages[i] as { role: 'user' | 'assistant'; text: string }
-    if (!message.text.trim()) continue
-    if (message.role === 'assistant' && !reply) reply = message.text.trim()
-    else if (message.role === 'user') user = message.text.trim()
-  }
+  const last = said.at(-1)
+  if (current !== null && last?.role === 'user' && last.text.trim() === current.trim()) said.pop()
+  const at = said.findLastIndex((message) => message.role === 'user')
+  const user = at < 0 ? '' : (said[at] as { text: string }).text.trim()
+  const reply = said.slice(at + 1).findLast((message) => message.role === 'assistant')?.text.trim() ?? ''
   if (!user && !reply) return null
   return { previous_user_message: user.slice(0, 400), assistant_reply: reply.slice(-600) }
 }
@@ -560,12 +560,6 @@ function yesNoOf(answer: Record<string, unknown> | undefined): number | null {
   return null
 }
 
-/**
- * Reads the first request's answer. The ranking is the Choice's probability
- * distribution, surest first; a backend that sends none ranks the named
- * choice alone, at the reported confidence or none. The gate is the mean of
- * the oriented nouls that were answered, or null when none was.
- */
 /** The model version a response says answered it (`jev-latest` resolves to one), or null. */
 export function modelOf(responseText: string): string | null {
   try {
@@ -576,6 +570,12 @@ export function modelOf(responseText: string): string | null {
   }
 }
 
+/**
+ * Reads the first request's answer. The ranking is the Choice's probability
+ * distribution, surest first; a backend that sends none ranks the named
+ * choice alone, at the reported confidence or none. The gate is the mean of
+ * the oriented nouls that were answered, or null when none was.
+ */
 export function readWide(responseText: string): Wide | null {
   const answers = answersOf(responseText)
   const which = answers?.which
@@ -812,12 +812,15 @@ export const FIND_SKILL_TOOL = {
   },
 } as const
 
-/**
- * What `find_skill` answers: the pick with the description the listing left
- * out, a plain "none", or that the lookup failed, which is not a "none". Never
- * a SKILL.md: the model loads the skill with the Skill tool, which re-attaches
- * it after a compaction.
- */
+/** What the requests answered for one decision, kept for the record file. */
+export interface Trace {
+  wide: Wide | null
+  rerank: Rerank | null
+  ms: number
+  /** The model version that answered, so a shift in scores can be told from an alias moving. */
+  model: string | null
+}
+
 /** One decision as the record file keeps it. */
 export interface Decision {
   /** Where the text came from: the person's prompt, or the model's find_skill. */
@@ -825,15 +828,11 @@ export interface Decision {
   text: string
   /** The turn before, as sent beside the text. */
   context: RecentContext | null
-  wide: Wide | null
-  rerank: Rerank | null
   pick: string | null
   reason: string
   /** False when a request failed or timed out. */
   answered: boolean
-  ms: number
-  /** The model version that answered, so a shift in scores can be told from an alias moving. */
-  model: string | null
+  trace: Trace | null
   /** The subagent that called find_skill, when one did. */
   agentId?: string
 }
@@ -846,17 +845,25 @@ export interface Decision {
 export function recordLine(at: number, entry: Decision | { loaded: string; suggested: string | null }): string {
   const time = new Date(at).toISOString()
   if ('loaded' in entry) return `${JSON.stringify({ at: time, ...entry })}\n`
-  const { wide, rerank, ...rest } = entry
+  const { trace, ...rest } = entry
   return `${JSON.stringify({
     at: time,
     ...rest,
-    gate: wide?.gate ?? null,
-    gateValues: wide?.gateValues ?? {},
-    top: wide?.ranked.slice(0, 5) ?? [],
-    rerank: rerank && { winner: rerank.winner, confidence: rerank.confidence, fits: rerank.fits },
+    ms: trace?.ms ?? 0,
+    model: trace?.model ?? null,
+    gate: trace?.wide?.gate ?? null,
+    gateValues: trace?.wide?.gateValues ?? {},
+    top: trace?.wide?.ranked.slice(0, 5) ?? [],
+    rerank: trace?.rerank ? { winner: trace.rerank.winner, confidence: trace.rerank.confidence, fits: trace.rerank.fits } : null,
   })}\n`
 }
 
+/**
+ * What `find_skill` answers: the pick with the description the listing left
+ * out, a plain "none", or that the lookup failed, which is not a "none". Never
+ * a SKILL.md: the model loads the skill with the Skill tool, which re-attaches
+ * it after a compaction.
+ */
 export function findSkillResult(pick: Skill | null | 'unavailable'): string {
   if (pick === 'unavailable') return 'The skill lookup is unavailable right now (it failed or timed out); the skill listing still names every skill.'
   if (!pick) return 'No installed skill fits this sub-task.'

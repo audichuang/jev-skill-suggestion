@@ -133,7 +133,7 @@ import {
   underConfigDir,
   wideQuestions,
 } from './policy.ts'
-import type { Candidate, PolicyConfig, Provider, RecentContext, Rerank, Skill, Wide } from './policy.ts'
+import type { Candidate, PolicyConfig, Provider, RecentContext, Rerank, Skill, Trace, Wide } from './policy.ts'
 
 /** Prompt origins that are not a task of the person's: nothing to suggest for. */
 const NOT_A_TASK = new Set([
@@ -159,11 +159,8 @@ interface Choice {
   file: SkillFile | null
   /** False when a request failed or timed out: "no pick" is then not an answer. */
   answered: boolean
-  /** What the requests answered, for the record file. */
-  wide: Wide | null
-  rerank: Rerank | null
-  ms: number
-  model: string | null
+  /** What the requests answered, for the record file; null when none was asked. */
+  trace: Trace | null
 }
 
 /** What `choose` reads from the options, and the session state it shares with the hooks. */
@@ -187,20 +184,24 @@ interface ChooseContext {
   records: Map<string, string>
 }
 
-/** The turn before `current` (null mid-turn), sent beside the request; null when off or unreadable. */
-async function contextFor($: EngineInterface, ctx: ChooseContext, current: string | null): Promise<RecentContext | null> {
-  if (!ctx.sendRecentContext) return null
+/**
+ * The turn before `current` (null mid-turn), sent beside the request; null
+ * when off or unreadable, and for a subagent, whose conversation is not the
+ * session's transcript.
+ */
+async function contextFor(
+  $: EngineInterface,
+  ctx: ChooseContext,
+  current: string | null,
+  agentId?: string,
+): Promise<RecentContext | null> {
+  if (!ctx.sendRecentContext || agentId) return null
   try {
     return recentContextOf(await $.session.messages(), current)
   } catch (error) {
     $.ui.log(`[jev-skill-suggestion] could not read the transcript: ${String(error)}`)
     return null
   }
-}
-
-/** A Choice's fields the record file keeps, beside the source, text and pick. */
-function traceOf({ reason, answered, wide, rerank, ms, model }: Choice) {
-  return { reason, answered, wide, rerank, ms, model }
 }
 
 /** A record file stops growing here, under `$.fs`'s 4 MiB per read and write. */
@@ -369,7 +370,7 @@ async function choose(
   }
   const skills = catalog(commands, restrictTo, new Set([...ctx.neverSuggested, ...off]))
   if (skills.length === 0) {
-    return { pick: null, reason: 'no candidate skills', file: null, answered: true, wide: null, rerank: null, ms: 0, model: null }
+    return { pick: null, reason: 'no candidate skills', file: null, answered: true, trace: null }
   }
   const pluginOf = new Map(commands.map((command) => [command.name, command.plugin]))
 
@@ -463,10 +464,7 @@ async function choose(
     reason: decision.reason,
     file,
     answered: wide !== null && (!rerankAttempted || rerank !== null),
-    wide,
-    rerank,
-    ms: (await $.clock.now()) - startedAt,
-    model,
+    trace: { wide, rerank, ms: (await $.clock.now()) - startedAt, model },
   }
 }
 
@@ -654,7 +652,7 @@ export const register: Register = (on, options) => {
     const choice = await choose($, state, e.text, { restrictTo: injectContent ? new Set() : listed, askGate: true, context })
     if (!choice) return next(e)
     const { pick, file } = choice
-    await record($, state, { source: 'prompt', text: e.text, context, pick: pick?.name ?? null, ...traceOf(choice) })
+    await record($, state, { source: 'prompt', text: e.text, context, pick: pick?.name ?? null, reason: choice.reason, answered: choice.answered, trace: choice.trace })
     // A row in the transcript scrolls away; this line stays on screen.
     if (logDecisions) $.ui.status(describeStatus(pick?.name ?? null))
     if (logDecisions) {
@@ -741,11 +739,13 @@ export const register: Register = (on, options) => {
     // engine lists is offered; before the listing is seen, nothing is.
     let answer: Skill | null | 'unavailable' = 'unavailable'
     try {
-      // A subagent's own conversation is not the session's transcript.
-      const context = e.agentId ? null : await contextFor($, state, null)
+      const context = await contextFor($, state, null, e.agentId)
       const choice = task && listed.size > 0 ? await choose($, state, task, { restrictTo: listed, askGate: false, context }) : null
       if (choice?.answered) answer = choice.pick
-      if (choice) await record($, state, { source: 'find_skill', text: task, context, pick: answer && answer !== 'unavailable' ? answer.name : null, ...traceOf(choice), ...(e.agentId ? { agentId: e.agentId } : {}) })
+      if (choice) {
+        const { reason, answered, trace } = choice
+        await record($, state, { source: 'find_skill', text: task, context, pick: choice.pick?.name ?? null, reason, answered, trace, agentId: e.agentId })
+      }
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] find_skill failed: ${String(error)}`)
     }

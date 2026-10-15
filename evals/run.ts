@@ -20,6 +20,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import {
   DEFAULT_BASE_URL,
   DEFAULT_MODEL,
+  configDirOf,
+  installPathsOf,
+  readSkillSettings,
   decide,
   detailOf,
   endpoint,
@@ -60,9 +63,13 @@ const policy: PolicyConfig = {
 
 // The catalog, named the way the engine names it.
 const home = process.env.HOME as string
-const config = process.env.CLAUDE_CONFIG_DIR ?? `${home}/.claude`
-const settings = JSON.parse(readFileSync(`${config}/settings.json`, 'utf8'))
-const off = new Set(Object.entries(settings.skillOverrides ?? {}).filter(([, v]) => v === 'off').map(([k]) => k))
+const config = configDirOf(home, process.env.CLAUDE_CONFIG_DIR)
+const settingsJson = readFileSync(`${config}/settings.json`, 'utf8')
+const off = new Set(
+  Object.entries(readSkillSettings(settingsJson).skillOverrides).filter(([, v]) => v === 'off').map(([k]) => k),
+)
+// readSkillSettings reads only the two fields the setup touches.
+const enabled: Record<string, boolean> = JSON.parse(settingsJson).enabledPlugins ?? {}
 const files = new Map<string, string>()
 const skills: Skill[] = []
 const add = (name: string, file: string) => {
@@ -77,14 +84,18 @@ const skillDirs = (dir: string) =>
   existsSync(dir) ? readdirSync(dir).filter((entry) => existsSync(`${dir}/${entry}/SKILL.md`)) : []
 if (project) for (const entry of skillDirs(`${project}/.claude/skills`)) add(entry, `${project}/.claude/skills/${entry}/SKILL.md`)
 for (const entry of skillDirs(`${config}/skills`)) add(entry, `${config}/skills/${entry}/SKILL.md`)
-const installed = JSON.parse(readFileSync(`${config}/plugins/installed_plugins.json`, 'utf8')).plugins
-for (const [key, installs] of Object.entries(installed) as [string, { installPath: string }[]][]) {
-  if (settings.enabledPlugins?.[key] !== true) continue
+const installed = readFileSync(`${config}/plugins/installed_plugins.json`, 'utf8')
+for (const key of Object.keys(enabled).filter((key) => enabled[key] === true)) {
   const plugin = key.split('@')[0] as string
-  const dir = `${installs[0]?.installPath}/skills`
-  for (const entry of skillDirs(dir)) add(`${plugin}:${entry}`, `${dir}/${entry}/SKILL.md`)
+  for (const path of installPathsOf(installed, key)) {
+    const dir = `${path}/skills`
+    for (const entry of skillDirs(dir)) add(`${plugin}:${entry}`, `${dir}/${entry}/SKILL.md`)
+  }
 }
+
 if (reverse) skills.reverse()
+// Every skill the model may invoke, the same for every case.
+const offered = skills.filter((skill) => modelInvocable(files.get(skill.name) ?? null))
 
 // One request, cached by its body.
 const url = endpoint('typesafe', DEFAULT_BASE_URL.typesafe)
@@ -115,7 +126,6 @@ for (const c of cases) {
   const wide = readWide(wideAnswer)
   let rerank = null
   let rerankAttempted = false
-  const offered = skills.filter((skill) => modelInvocable(files.get(skill.name) ?? null))
   if (wide && passesGate(wide, policy)) {
     const candidates: Candidate[] = shortlistOf(wide, offered, policy.shortlist).map((skill) => ({
       ...skill,
