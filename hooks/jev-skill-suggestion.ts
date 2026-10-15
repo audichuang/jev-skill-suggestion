@@ -145,45 +145,67 @@ const NOT_A_TASK = new Set([
 /** A SKILL.md as found on disk. */
 type SkillFile = { path: string; markdown: string }
 
+/** The backend the keys select, with where and as which model it is asked. */
+type Backend = { active: Provider | null; apiKey: string; modelId: string; url: string }
+
 /** What `choose` reads from the options, and the session state it shares with the hooks. */
 interface Chooser {
-  backendOf: (typesafeEnv: string | undefined, gatewayEnv: string | undefined) => {
-    active: Provider | null
-    apiKey: string
-    modelId: string
-    url: string
-  }
-  forced: string
-  files: Map<string, SkillFile | null>
-  neverSuggested: ReadonlySet<string>
-  logDecisions: boolean
-  timeoutMs: number
-  rerankTimeoutMs: number
-  rerankEnabled: boolean
-  excerptChars: number
-  policy: PolicyConfig
+  readonly backendOf: (typesafeEnv: string | undefined, gatewayEnv: string | undefined) => Backend
+  readonly forced: string
+  readonly neverSuggested: ReadonlySet<string>
+  readonly logDecisions: boolean
+  readonly timeoutMs: number
+  readonly rerankTimeoutMs: number
+  readonly rerankEnabled: boolean
+  readonly excerptChars: number
+  readonly policy: PolicyConfig
+  // Session state, filled in as hooks run.
+  readonly files: Map<string, SkillFile | null>
   unusableReported: boolean
   displayToId: Map<string, string> | null
+}
+
+/** The user's config dir, or '' when HOME is unset and it cannot be named. */
+async function configDirFor($: EngineInterface): Promise<string> {
+  const home = (await $.env.get('HOME')) ?? ''
+  return home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
+}
+
+/**
+ * Every command `$.command.list()` reports, under the id the engine lists,
+ * runs and overrides it by. Throws as `$.command.list()` does.
+ */
+async function listCommands($: EngineInterface, s: Chooser, configDir: string) {
+  const commands = await $.command.list()
+  if (!s.displayToId && commands.some((command) => !commandLike(command.name))) {
+    const found: { dir: string; markdown: string }[] = []
+    for (const dir of [`${await $.session.cwd()}/.claude/skills`, configDir && `${configDir}/skills`]) {
+      if (!dir || !(await $.fs.exists(dir))) continue
+      for (const entry of await $.fs.list(dir)) {
+        const file = `${dir}/${entry.name}/SKILL.md`
+        if (entry.kind === 'dir' && (await $.fs.exists(file))) found.push({ dir: entry.name, markdown: await $.fs.read(file) })
+      }
+    }
+    s.displayToId = displayIds(found)
+  }
+  return canonical(commands, s.displayToId ?? new Map())
 }
 
 /**
  * Jev's pick for `text`, with the pick's SKILL.md when found, or null when
  * the skills could not be listed or none is a candidate. `restrictTo`, when
  * non-empty, keeps the candidates to those names: the listing's, for a pick
- * the model will load with the Skill tool.
+ * the model will load with the Skill tool (empty until the listing is seen).
+ * `askGate` off leaves the gate questions out, so the gate passes: a model
+ * that calls find_skill has already decided it wants a skill.
  */
 async function choose(
   $: EngineInterface,
   s: Chooser,
   text: string,
-  restrictTo: ReadonlySet<string>,
-  gated: boolean,
+  { restrictTo, askGate }: { restrictTo: ReadonlySet<string>; askGate: boolean },
 ): Promise<{ pick: Skill | null; reason: string; file: SkillFile | null } | null> {
-  // The gate asks whether a prompt wants a skill at all. A model that calls
-  // find_skill has answered that itself, and one sub-task sentence, read
-  // without its conversation, scores low on it; the rerank's `fits` still
-  // rejects a skill that does not do the thing.
-  const policy = gated ? s.policy : { ...s.policy, gateThreshold: -Infinity }
+  const configDir = await configDirFor($)
   const { active, apiKey, modelId, url } = s.backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
 
   /** One request to the active backend, or null on timeout, error or a non-2xx. */
@@ -221,8 +243,6 @@ async function choose(
     if (cached !== undefined) return cached
     let found: SkillFile | null = null
     try {
-      const home = (await $.env.get('HOME')) ?? ''
-      const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
       const relative = skillFileCandidates(skill.name, plugin)
       // The engine reads the project's `.claude/` (the working directory
       // only, not its ancestors) and the user's config dir.
@@ -267,21 +287,7 @@ async function choose(
 
   let commands: Awaited<ReturnType<typeof $.command.list>>
   try {
-    commands = await $.command.list()
-    if (!s.displayToId && commands.some((command) => !commandLike(command.name))) {
-      const found: { dir: string; markdown: string }[] = []
-      const home = (await $.env.get('HOME')) ?? ''
-      const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
-      for (const dir of [`${await $.session.cwd()}/.claude/skills`, configDir && `${configDir}/skills`]) {
-        if (!dir || !(await $.fs.exists(dir))) continue
-        for (const entry of await $.fs.list(dir)) {
-          const file = `${dir}/${entry.name}/SKILL.md`
-          if (entry.kind === 'dir' && (await $.fs.exists(file))) found.push({ dir: entry.name, markdown: await $.fs.read(file) })
-        }
-      }
-      s.displayToId = displayIds(found)
-    }
-    commands = canonical(commands, s.displayToId ?? new Map())
+    commands = await listCommands($, s, configDir)
   } catch (error) {
     $.ui.log(`[jev-skill-suggestion] could not list the skills: ${String(error)}`)
     return null
@@ -291,9 +297,8 @@ async function choose(
   // read from the user settings on every prompt, so an edit counts at once.
   const off = new Set<string>()
   try {
-    const configDir = configDirOf((await $.env.get('HOME')) ?? '~', await $.env.get('CLAUDE_CONFIG_DIR'))
     const settingsPath = `${configDir}/settings.json`
-    if (await $.fs.exists(settingsPath)) {
+    if (configDir && (await $.fs.exists(settingsPath))) {
       const { skillOverrides } = readSkillSettings(await $.fs.read(settingsPath))
       for (const [name, state] of Object.entries(skillOverrides)) if (state === 'off') off.add(name)
     }
@@ -311,7 +316,7 @@ async function choose(
   const startedAt = await $.clock.now()
   let wide: Wide | null = null
   if (active) {
-    const answer = await ask(text, wideQuestions(active, skills), 'ranking', s.timeoutMs)
+    const answer = await ask(text, wideQuestions(active, skills, askGate), 'ranking', s.timeoutMs)
     if (answer) wide = readWide(answer)
   } else {
     // No backend: the engine's own small-model classifier answers the same
@@ -341,9 +346,9 @@ async function choose(
   // Before the listing has been seen, `$.command.list()` may name a skill
   // the model is not allowed to invoke; its own frontmatter tells.
   const barred: string[] = []
-  if (active && s.rerankEnabled && wide && passesGate(wide, policy)) {
+  if (active && s.rerankEnabled && wide && passesGate(wide, s.policy)) {
     const candidates: Candidate[] = []
-    for (const skill of shortlistOf(wide, skills, policy.shortlist)) {
+    for (const skill of shortlistOf(wide, skills, s.policy.shortlist)) {
       const body = await bodyOf(skill, pluginOf.get(skill.name))
       if (!modelInvocable(body)) {
         barred.push(skill.name)
@@ -367,7 +372,7 @@ async function choose(
   }
 
   const offered = barred.length > 0 ? skills.filter((skill) => !barred.includes(skill.name)) : skills
-  let decision = decide(wide, rerank, offered, policy, rerankAttempted)
+  let decision = decide(wide, rerank, offered, s.policy, rerankAttempted)
   let pick = decision.name ? (skills.find((skill) => skill.name === decision.name) ?? null) : null
   // The winner's own frontmatter has the last word, whichever path picked it.
   if (pick && !barred.includes(pick.name) && !modelInvocable(await bodyOf(pick, pluginOf.get(pick.name)))) {
@@ -400,7 +405,6 @@ export const register: Register = (on, options) => {
   // key's environment variable (TYPESAFE_API_KEY, AI_GATEWAY_API_KEY) is
   // read at the first hook, since only `$` can read the environment; the
   // first answer stands for the process.
-  type Backend = { active: Provider | null; apiKey: string; modelId: string; url: string }
   let backend: Backend | null = null
   const backendOf = (typesafeEnv: string | undefined, gatewayEnv: string | undefined): Backend => {
     if (backend) return backend
@@ -462,7 +466,7 @@ export const register: Register = (on, options) => {
   // Each skill's SKILL.md as first found, with where, or null when nowhere:
   // read once per session, since the second request wants it on every prompt
   // it is on, and the injection wants it whole.
-  const files = new Map<string, { path: string; markdown: string } | null>()
+  const files = new Map<string, SkillFile | null>()
   // The skills whose instructions were already attached this session: a
   // second time, the block only names the skill again.
   const injected = new Set<string>()
@@ -537,7 +541,6 @@ export const register: Register = (on, options) => {
     return { text: kept }
   })
 
-
   on('prompt.submit', async ($, e, next) => {
     if (!announced) {
       announced = true
@@ -560,7 +563,7 @@ export const register: Register = (on, options) => {
 
     // Content mode loads the skill itself, so it is not bound to what the
     // engine lists; "suggest" leaves loading to the Skill tool, which is.
-    const choice = await choose($, state, e.text, injectContent ? new Set() : listed, true)
+    const choice = await choose($, state, e.text, { restrictTo: injectContent ? new Set() : listed, askGate: true })
     if (!choice) return next(e)
     const { pick, file } = choice
     // A row in the transcript scrolls away; this line stays on screen.
@@ -643,7 +646,7 @@ export const register: Register = (on, options) => {
     try {
       // The model loads the answer with the Skill tool, so only what the
       // engine lists is offered.
-      if (task) pick = (await choose($, state, task, listed, false))?.pick ?? null
+      if (task) pick = (await choose($, state, task, { restrictTo: listed, askGate: false }))?.pick ?? null
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] find_skill failed: ${String(error)}`)
     }
@@ -652,6 +655,8 @@ export const register: Register = (on, options) => {
         `[jev-skill-suggestion] find_skill${e.agentId ? ` (${e.agentId})` : ''} "${task}": ${pick ? `suggesting /${pick.name}` : 'no suggestion'}`,
       )
     }
+    // The latest pick, prompt's or find_skill's, is what a skill.prompt that
+    // follows is measured against.
     if (pick) suggested = pick.name
     return { result: findSkillResult(pick) }
   })
@@ -666,21 +671,7 @@ export const register: Register = (on, options) => {
     // hide too little, and the backup would save the wrong values.
     let commands: Awaited<ReturnType<typeof $.command.list>> = []
     try {
-      commands = await $.command.list()
-      if (!state.displayToId && commands.some((command) => !commandLike(command.name))) {
-        const found: { dir: string; markdown: string }[] = []
-        const home = (await $.env.get('HOME')) ?? ''
-        const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
-        for (const dir of [`${await $.session.cwd()}/.claude/skills`, configDir && `${configDir}/skills`]) {
-          if (!dir || !(await $.fs.exists(dir))) continue
-          for (const entry of await $.fs.list(dir)) {
-            const file = `${dir}/${entry.name}/SKILL.md`
-            if (entry.kind === 'dir' && (await $.fs.exists(file))) found.push({ dir: entry.name, markdown: await $.fs.read(file) })
-          }
-        }
-        state.displayToId = displayIds(found)
-      }
-      commands = canonical(commands, state.displayToId ?? new Map())
+      commands = await listCommands($, state, await configDirFor($))
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] setup: could not list the skills: ${String(error)}`)
       return next({ ...e, text: setupAborted(`the skills could not be listed (${String(error)})`) })

@@ -423,8 +423,8 @@ function yesNo(provider: Provider, instructions: string): Record<string, unknown
   return { type: provider === 'typesafe' ? 'noul' : 'boolean', instructions }
 }
 
-/** The first request's `questions`: the ranking and the gate. */
-export function wideQuestions(provider: Provider, skills: readonly Skill[]): Record<string, unknown> {
+/** The first request's `questions`: the ranking, and the gate unless `askGate` is off. */
+export function wideQuestions(provider: Provider, skills: readonly Skill[], askGate = true): Record<string, unknown> {
   const criteria: Record<string, string> = {}
   for (const skill of skills) criteria[skill.name] = skill.description || `A skill named ${skill.name}.`
   const questions: Record<string, unknown> = {
@@ -435,6 +435,7 @@ export function wideQuestions(provider: Provider, skills: readonly Skill[]): Rec
       criteria,
     },
   }
+  if (!askGate) return questions
   for (const [key, text] of Object.entries(GATE_QUESTIONS)) {
     questions[`gate::${key}`] = yesNo(provider, text)
   }
@@ -760,7 +761,7 @@ export const FIND_SKILL_TOOL = {
 export function findSkillResult(pick: Skill | null): string {
   if (!pick) return 'No installed skill fits this sub-task.'
   return [
-    `${line(pick)}`,
+    line(pick),
     `Load it with the Skill tool (skill: "${pick.name}") if it fits the sub-task; ignore it if it does not.`,
   ].join('\n')
 }

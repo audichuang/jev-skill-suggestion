@@ -11,18 +11,20 @@ function seat(options: Record<string, unknown>, world: { env?: Record<string, st
   const submit = hooks['prompt.submit'] as Hook<'prompt.submit'>
 
   const auth: string[] = []
+  const registered: string[] = []
   const files = world.files ?? {}
   const $ = {
     command: { list: async () => [{ name: 'test-runner', description: 'Fix failing tests', source: 'user' }] },
     http: {
-      fetch: async (_url: string, init: { headers: Record<string, string> }) => {
+      fetch: async (_url: string, init: { headers: Record<string, string>; body: string }) => {
         auth.push(init.headers.authorization as string)
         return {
           ok: true,
           text: JSON.stringify({ answers: {
             which: { type: 'choice', choice: 'test-runner' },
             'fits::test-runner': { type: 'noul', noul: world.fits ?? 0.9 },
-            ...(world.gate === undefined
+            // Gate answers only when the gate was asked, as the API does.
+            ...(world.gate === undefined || !init.body.includes('gate::')
               ? {}
               : {
                   'gate::acts_on_user_system': { type: 'noul', noul: world.gate },
@@ -37,12 +39,20 @@ function seat(options: Record<string, unknown>, world: { env?: Record<string, st
     fs: { exists: async (path: string) => path in files, read: async (path: string) => files[path] as string },
     env: { get: async (name: string) => (world.env ?? {})[name] },
     session: { cwd: async () => '/work' },
-    tool: { register: async (spec: { name: string }) => ({ tool: `mcp__jev__${spec.name}` }) },
+    tool: {
+      register: async (spec: { name: string }) => (registered.push(spec.name), { tool: `mcp__jev__${spec.name}` }),
+    },
     ui: { log: () => {}, status: () => {} },
   } as unknown as EngineInterface
   const next = (async (e: PromptSubmitInput) => e) as unknown as Next<'prompt.submit'>
   const ask = (text: string) => submit($, { text, wait: false, origin: { kind: 'composer' } }, next)
-  return { ask, auth, hooks, $ }
+  const pass = (async (e: unknown) => e) as never
+  const start = () => (hooks['session.start'] as Hook<'session.start'>)($, {} as SessionStartInput, pass)
+  const describe = (tool: string) =>
+    (hooks['tool.describe'] as Hook<'tool.describe'>)($, { tool, description: 'd' } as ToolDescribeInput, pass)
+  const call = (e: Record<string, unknown>) =>
+    (hooks['tool.call'] as Hook<'tool.call'>)($, { tool_use_id: 't', ...e } as unknown as ToolCallInput, pass)
+  return { ask, auth, registered, start, describe, call }
 }
 
 test('with no key option the key comes from TYPESAFE_API_KEY, and a bare go-ahead is never ranked', async () => {
@@ -72,44 +82,30 @@ test('a skill turned off in the user settings is never offered, under CLAUDE_CON
 })
 
 test('find_skill is registered at session start, kept out of ToolSearch, and answers with the pick for the Skill tool', async () => {
-  const { hooks, $, auth } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
-  const pass = (async (e: unknown) => e) as never
-  await (hooks['session.start'] as Hook<'session.start'>)($, {} as SessionStartInput, pass)
-  const described = await (hooks['tool.describe'] as Hook<'tool.describe'>)(
-    $,
-    { tool: 'mcp__jev__find_skill', description: 'd' } as ToolDescribeInput,
-    pass,
-  )
+  const { start, describe, call, auth } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
+  await start()
+  const described = await describe('mcp__jev__find_skill')
   expect('isDeferred' in described && described.isDeferred).toBe(false)
-  const other = await (hooks['tool.describe'] as Hook<'tool.describe'>)($, { tool: 'Bash', description: 'd' } as ToolDescribeInput, pass)
-  expect('isDeferred' in other).toBe(false)
+  expect('isDeferred' in (await describe('Bash'))).toBe(false)
 
-  const call = hooks['tool.call'] as Hook<'tool.call'>
-  const answer = await call($, { tool: 'mcp__jev__find_skill', tool_use_id: 't', task: 'fix the failing tests' } as unknown as ToolCallInput, pass)
+  const answer = await call({ tool: 'mcp__jev__find_skill', task: 'fix the failing tests' })
   expect(auth.length).toBe(2)
   expect('result' in answer && String(answer.result)).toContain('skill: "test-runner"')
-  const bash = { tool: 'Bash', tool_use_id: 'b', command: 'ls' } as unknown as ToolCallInput
-  expect(await call($, bash, pass)).toBe(bash)
+  const bash = { tool: 'Bash', command: 'ls' }
+  expect(await call(bash)).toEqual({ tool_use_id: 't', ...bash })
 })
 
 test('find_skill is not registered with findSkill off', async () => {
-  const { hooks, $ } = seat({ findSkill: false }, {})
-  const registered: unknown[] = []
-  const withSpy = { ...$, tool: { register: async (spec: unknown) => (registered.push(spec), { tool: 'x' }) } } as unknown as EngineInterface
-  await (hooks['session.start'] as Hook<'session.start'>)(withSpy, {} as SessionStartInput, (async (e: unknown) => e) as never)
+  const { start, registered } = seat({ findSkill: false }, {})
+  await start()
   expect(registered).toEqual([])
 })
 
 test('find_skill skips the gate a prompt must pass: the model calling it already wants a skill', async () => {
-  const { ask, hooks, $ } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, gate: 0.1 })
+  const { ask, start, call } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, gate: 0.1 })
   const prompted = await ask('fix the failing tests')
   expect('context' in prompted ? prompted.context : undefined).toBeUndefined()
-  const pass = (async (e: unknown) => e) as never
-  await (hooks['session.start'] as Hook<'session.start'>)($, {} as SessionStartInput, pass)
-  const answer = await (hooks['tool.call'] as Hook<'tool.call'>)(
-    $,
-    { tool: 'mcp__jev__find_skill', tool_use_id: 't', task: 'fix the failing tests' } as unknown as ToolCallInput,
-    pass,
-  )
+  await start()
+  const answer = await call({ tool: 'mcp__jev__find_skill', task: 'fix the failing tests' })
   expect('result' in answer && String(answer.result)).toContain('skill: "test-runner"')
 })
