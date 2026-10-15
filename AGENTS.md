@@ -6,14 +6,18 @@ Claude Code mod（hooks module plugin），fork 自 davila7/claude-code-template
 
 - `claude plugin test .` 與 `claude plugin validate .`。不要用 `bun test`：`claude-code/testing` 只有 `claude plugin test` 提供。
 - 改到 hook 行為時做實機驗證：push 後跑 `claude plugin marketplace update jev-skill-suggestion && claude plugin update jev-skill-suggestion@jev-skill-suggestion`，再用 `claude --debug -p '<需要某個 skill 的任務>'` 開一個 session，到 `~/.claude/debug/` 最新的檔案裡找 `ready on typesafe` 和 `suggesting /…`。headless 模式下 log 只寫進 debug 檔。
-- 已安裝同名 plugin 時，`--plugin-dir` 會被安裝版蓋掉（debug log 寫 `@jev-skill-suggestion`，不是 `@inline`）。先 `claude plugin disable jev-skill-suggestion@jev-skill-suggestion`，跑完再 `enable`。macOS 沒有 `timeout` 指令，別拿它包 `claude -p`。
+- 已安裝同名 plugin 時，`--plugin-dir` 會被安裝版蓋掉（debug log 寫 `@jev-skill-suggestion`，不是 `@inline`）。先 `claude plugin disable jev-skill-suggestion@jev-skill-suggestion`，跑完再 `enable`。macOS 沒有 `timeout` 指令，別拿它包 `claude -p`；加 `--disallowedTools` 時提示詞放在它前面，否則會被當成工具名吃掉，session 根本沒跑。
 - 每次判斷會寫進 `~/.claude/jev-skill-suggestion/decisions/<session id>.jsonl`，比對行為時讀這個檔比翻 debug log 準。
+- 改到問 Jev 的問題、門檻或模型，前後都跑 `bun evals/run.ts`（用法見 `evals/README.md`），分數沒變好就不留，結果記進 `evals/README.md`。照官方文件改的寫法實測也可能變差。
+- 這個 repo 是公開的。從某個專案的對話取出的題目和紀錄（含它的表名、SQL、帳號）只能放在 `~/.claude/jev-skill-suggestion/evals/`，用 `--cases` 傳入，不進 repo。
 
 ## 不可退回的設計
 
 - setup 只寫 `name-only`。不要寫 `user-invocable-only`，也不要碰 `disableBundledSkills`：前者會讓 Skill tool 拒絕載入，skill 接 skill 會斷、子代理也載不到；後者會讓內建 skill 整批消失（上游 #1013，也就是開這個 fork 的原因）。
 - `hideListing` 預設 `false`。content 模式沒挑到 skill 時不附任何文字，讓模型自己從清單挑。
 - 所有失敗路徑都 fail-open：逾時、非 2xx、例外都只是不給建議，mod 絕不能擋住 prompt。
+- setup 只修剪 user skill。專案自己的 skill 保留描述，由使用者決定放多少，這是使用者明確的決定。
+- `DEFAULT_MODEL.typesafe` 釘版本 ID，不用 `jev-latest`：門檻是對著那一版調的，alias 會自己移動。換版本要重跑 eval 再改門檻。
 - plugin 名稱 `jev-skill-suggestion` 不改：使用者 `pluginConfigs` 的 key 是 `<name>@<載入來源>`，改名會讓所有人的設定失效。
 
 ## 程式分工
