@@ -74,7 +74,9 @@ export const DEFAULT_BASE_URL: Record<Provider, string> = {
 }
 
 export const DEFAULT_MODEL: Record<Provider, string> = {
-  typesafe: 'jev-latest',
+  // Pinned, not `jev-latest`: an alias moves, and the thresholds are tuned
+  // against one version (evals/README.md).
+  typesafe: 'jev-1.14.0',
   gateway: 'typesafe-ai/jev',
 }
 
@@ -413,13 +415,15 @@ export const GATE_QUESTIONS: Record<string, string> = {
     'Would a careful expert answering this consult a specific documented procedure or set of commands, rather than answering from general understanding?',
   prose_suffices:
     "Could a knowledgeable generalist fully satisfy this request in prose, with no tools, no documentation, and no access to the user's files or accounts?",
+  names_its_task:
+    'Does this message on its own say what is to be done, specifically enough to start without reading any earlier messages?',
 }
 
 /** Gate questions where a yes points away from needing a skill. */
 const INVERTED = new Set(['prose_suffices'])
 
 /** The same yes/no question under two names. */
-function yesNo(provider: Provider, instructions: string): Record<string, unknown> {
+function yesNo(provider: Provider, instructions: unknown): Record<string, unknown> {
   return { type: provider === 'typesafe' ? 'noul' : 'boolean', instructions }
 }
 
@@ -462,10 +466,10 @@ export function rerankQuestions(
     },
   }
   for (const candidate of candidates) {
-    questions[`fits::${candidate.name}`] = yesNo(
-      provider,
-      `Does the skill '${candidate.name}' do the specific thing the user's request asks for? It is described as: ${candidate.description || candidate.detail}`,
-    )
+    questions[`fits::${candidate.name}`] = yesNo(provider, {
+      question: 'Does `skill` do the specific thing the request asks for?',
+      skill: { name: candidate.name, description: candidate.description || candidate.detail },
+    })
   }
   return questions
 }

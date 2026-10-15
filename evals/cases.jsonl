@@ -1,0 +1,33 @@
+{"text":"深度幫我看看這專案 然後現在 什麼時候會注入推薦的skill ？？ 因為如果我一個對話 下goal 然後 中間他發現什麼都不能用skill 都看不到 這樣 本末導致了吧","expect":[null],"note":"session: got aghub-cli"}
+{"text":"擬去 /agent-reach  去查看看 b 有沒有先例大家怎麼做的 其實我覺得這樣才合理 因為 agent自己根本看不到 擬A 根本用猜的？ 不是嗎","expect":["agent-reach"],"note":"session: got agent-reach"}
+{"text":"詳細和我說說 擬現在規劃是什麼怎麼樣比較好 多agent advisor 都有看過大家討論一致認為是這樣嗎","expect":[null,"answer-me-with-html:answer-me-with-html"],"note":"session: got answer-me-with-html"}
+{"text":"好現在開始驗證嘗試看看吧","expect":[null],"note":"session: got ego-browser"}
+{"text":"好幫我完成優化吧","expect":[null],"note":"session: got ponytail"}
+{"text":"都幫我修改完成","expect":[null],"note":"session: got ponytail"}
+{"text":"好現在 這些已經裝到我電腦了嗎？？","expect":[null],"note":"session: got aghub-cli"}
+{"text":"幫我看看 這個 技能的和我們寫的 一樣嗎","expect":[null],"note":"session (with a screenshot): got skillgenie"}
+{"text":"幫我看看 jev-skillful 怎麼量測注入有沒有幫助 然後我想知道 擬有沒有辦法記錄每一次決策因為有時候我真的會發現 推薦無關的東西 我認為測試題誓詞可能真的要優畫一下","expect":[null,"research","agent-reach"],"note":"session: got skillgenie"}
+{"text":"好幫我完成優化 然後我們mod 如何詢問jev 的 有沒有需要優畫這方面還有jev 不是其實是希望 問題簡短乾淨嗎 現在我們技能越多 一次要他選擇越多嗎 這樣不會越來越膨脹嗎 為什麼不拆？ 比如10個一輪然後 拉出最後這些候選人在跑一輪？ /agent-reach","expect":["agent-reach","typesafe-ai","research"],"note":"session: got skillgenie"}
+{"text":"jev-latest 目前實際指向 jev-1.13.0，不是 10/14 剛發布的 1.14。之後要測新版時， 我覺得可以改用新的 然後 去看看 jev 官方文件對於提示詞等優畫 幫我最佳化","expect":["typesafe-ai","research",null],"note":"session: got research"}
+{"text":"幫我畫一張 web 服務的架構圖，輸出成 drawio 檔","expect":["drawio-skill","archify"],"note":"handwritten"}
+{"text":"Draw an architecture diagram of our web service as a .drawio file","expect":["drawio-skill","archify"],"note":"handwritten"}
+{"text":"把這份 Excel 報表的欄位整理成樞紐分析表","expect":["document-skills:xlsx"],"note":"handwritten"}
+{"text":"Fill in this PDF form and merge it with the cover page","expect":["document-skills:pdf"],"note":"handwritten"}
+{"text":"幫我把這份會議紀錄做成 10 頁簡報","expect":["document-skills:pptx","ppt-master:ppt-master","ppt-storyline"],"note":"handwritten"}
+{"text":"Write the failing test first, then implement the date parser","expect":["tdd"],"note":"handwritten"}
+{"text":"幫我開一個 PR 把這個分支推上去","expect":["pr"],"note":"handwritten"}
+{"text":"把這三篇論文丟進 NotebookLM 做成 podcast","expect":["notebooklm"],"note":"handwritten"}
+{"text":"這個 bug 一直重現不了，幫我系統性地找根因","expect":["diagnosing-bugs"],"note":"handwritten"}
+{"text":"幫我在 Twitter 和 Reddit 上找大家怎麼評價 Claude Code 的 mod","expect":["agent-reach"],"note":"handwritten"}
+{"text":"Ask Codex to review this diff for me","expect":["codex"],"note":"handwritten"}
+{"text":"幫我建立一個新的 skill，用來自動整理週報","expect":["skillgenie","document-skills:skill-creator"],"note":"handwritten"}
+{"text":"Review this branch's diff against main for bugs and spec drift","expect":["code-review"],"note":"handwritten"}
+{"text":"幫我做一個可以點的原型，看看設定頁長怎樣","expect":["prototype"],"note":"handwritten"}
+{"text":"Explain how the request flows through this service as a visual HTML page","expect":["answer-me-with-html:answer-me-with-html"],"note":"handwritten"}
+{"text":"幫我用 TypeSafe Jev API 寫一個工單分類器","expect":["typesafe-ai"],"note":"handwritten"}
+{"text":"什麼是 monad？用一句話解釋","expect":[null],"note":"handwritten negative"}
+{"text":"TypeScript 的 interface 和 type 差在哪","expect":[null],"note":"handwritten negative"}
+{"text":"rename this variable to camelCase","expect":[null],"note":"handwritten negative"}
+{"text":"why did you choose that approach?","expect":[null],"note":"handwritten negative"}
+{"text":"那第二點再講詳細一點","expect":[null],"note":"handwritten negative: follow-up"}
+{"text":"可以，照你說的改","expect":[null],"note":"handwritten negative: go-ahead"}

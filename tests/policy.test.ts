@@ -142,6 +142,7 @@ test('the first request ranks every skill and asks the three gate nouls, boolean
     'gate::acts_on_user_system',
     'gate::would_follow_documented_procedure',
     'gate::prose_suffices',
+    'gate::names_its_task',
   ])
   expect(Object.keys(typesafe.which?.criteria ?? {})).toEqual(['commit', 'pptx-author', 'powerpoint', 'pdf'])
   expect(typesafe.which?.criteria?.pdf).toContain('pdf')
@@ -225,11 +226,11 @@ test("the second request reads each candidate's detail and asks one fits noul pe
   ]
   const questions = rerankQuestions('typesafe', candidates) as Record<
     string,
-    { type: string; instructions: string; criteria?: Record<string, string> }
+    { type: string; instructions: unknown; criteria?: Record<string, string> }
   >
   expect(Object.keys(questions)).toEqual(['which', 'fits::powerpoint', 'fits::pptx-author'])
   expect(questions.which?.criteria?.powerpoint).toBe(candidates[0]?.detail)
-  expect(questions['fits::pptx-author']?.instructions).toContain("'pptx-author'")
+  expect(questions['fits::pptx-author']?.instructions).toMatchObject({ skill: { name: 'pptx-author' } })
   expect(questions['fits::pptx-author']?.type).toBe('noul')
 })
 
