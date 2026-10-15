@@ -466,10 +466,15 @@ export function rerankQuestions(
     },
   }
   for (const candidate of candidates) {
-    questions[`fits::${candidate.name}`] = yesNo(provider, {
-      question: 'Does `skill` do the specific thing the request asks for?',
-      skill: { name: candidate.name, description: candidate.description || candidate.detail },
-    })
+    const description = candidate.description || candidate.detail
+    // Structured instructions are TypeSafe's documented form; the Gateway's
+    // shape is read from its SDK, so it keeps the plain string.
+    questions[`fits::${candidate.name}`] = yesNo(
+      provider,
+      provider === 'typesafe'
+        ? { question: 'Does `skill` do the specific thing the request asks for?', skill: { name: candidate.name, description } }
+        : `Does the skill '${candidate.name}' do the specific thing the user's request asks for? It is described as: ${description}`,
+    )
   }
   return questions
 }

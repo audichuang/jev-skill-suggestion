@@ -231,6 +231,8 @@ test("the second request reads each candidate's detail and asks one fits noul pe
   expect(Object.keys(questions)).toEqual(['which', 'fits::powerpoint', 'fits::pptx-author'])
   expect(questions.which?.criteria?.powerpoint).toBe(candidates[0]?.detail)
   expect(questions['fits::pptx-author']?.instructions).toMatchObject({ skill: { name: 'pptx-author' } })
+  const gateway = rerankQuestions('gateway', candidates) as Record<string, { instructions: unknown }>
+  expect(gateway['fits::pptx-author']?.instructions).toContain("'pptx-author'")
   expect(questions['fits::pptx-author']?.type).toBe('noul')
 })
 
