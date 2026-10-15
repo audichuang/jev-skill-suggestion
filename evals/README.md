@@ -10,6 +10,8 @@ bun evals/run.ts --reverse                       # catalog in reverse: how much 
 
 Needs `TYPESAFE_API_KEY`. Answers are cached in `evals/.cache` by request body, so re-running unchanged questions, or sweeping `--gate` and `--fits`, costs nothing. A question change in `policy.ts` is what gets measured: edit, rerun, compare the `right · wrong skill · suggested when none wanted · missed` line.
 
+Cases taken from a project's sessions carry that project's code and data: keep them outside this repo (for example `~/.claude/jev-skill-suggestion/evals/<project>.jsonl`) and pass them with `--cases`, with `--project` for its skills.
+
 `cases.jsonl` is one case per line: `text`, `expect` (every acceptable answer, `null` for "suggest nothing") and `note`. The `session:` cases are real prompts where the mod made a pick, labelled after the fact; the rest are handwritten. Add a case whenever a wrong suggestion shows up in `~/.claude/jev-skill-suggestion/decisions/`.
 
 The catalog is read from disk (user skills, enabled plugins' skills, minus those turned `off`), so Claude Code's bundled skills are not in it, and the results are this machine's.
