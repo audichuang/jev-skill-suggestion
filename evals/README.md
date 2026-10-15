@@ -26,13 +26,15 @@ One change at a time, each kept only if it did not score worse.
 | + gate noul `names_its_task` | **22** | 3 | 8 | 0 |
 | `names_its_task` reworded ("…rather than only agreeing, continuing…") | 21 | 4 | 8 | 0 |
 | + structured `fits` question (`{ question, skill }`) | 22 | 3 | 8 | 0 |
-| + `fitsThreshold` 0.6 (shipped, `jev-1.14.0`) | **26** | 1 | 4 | 2 |
+| + `fitsThreshold` 0.6 (0.5.0, `jev-1.14.0`) | **26** | 1 | 4 | 2 |
 | Shipped questions on `jev-1.13.0` | 27 | 2 | 3 | 1 |
 | Shipped, catalog reversed | 26 | 1 | 4 | 2 |
+| 34th case added (a live Excel prompt 0.6 dropped at `fits` 0.53); `fitsThreshold` 0.5 (shipped in 0.5.1) | **27** of 34 | 2 | 4 | 1 |
+| Same 34, `fitsThreshold` 0.6 | 26 | 1 | 4 | 3 |
 
 - The `` `request` `` rewording, though the docs suggest naming fields, scored worse and was dropped.
 - `names_its_task` is what separated short follow-ups ("好幫我完成優化吧", 0.02–0.13) from tasks; the gate means of the two groups had overlapped almost entirely before it.
-- The threshold sweep (`--gate` 0.3–0.45 × `--fits` 0.3–0.7) put `fits` 0.7 at 28 right, but in a sparse band of this one set; 0.6 is the shipped value, with less riding on 33 cases.
+- The threshold sweep (`--gate` 0.3–0.45 × `--fits` 0.3–0.7) put `fits` 0.7 at 28 right, but in a sparse band of this one set; 0.6 shipped in 0.5.0 and dropped a plain Excel request the first live hour, so 0.5.1 ships 0.5.
 - 1.13 and 1.14 differ by one case here, which this set cannot tell from noise. 1.14 is pinned by preference; `jev-latest` still pointed at 1.13 and an alias moves under tuned thresholds.
 - Option order made no difference in totals.
 - Left: follow-ups about skills themselves ("幫我看看這個技能…") still draw skillgenie or skill-creator, and two tasks are now missed (`pr`, whose `fits` came back 0.49).

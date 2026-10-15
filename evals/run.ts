@@ -2,7 +2,7 @@
  * Replays evals/cases.jsonl through the mod's own two requests and policy,
  * against the skills installed on this machine, and scores each pick.
  *
- *   bun evals/run.ts [--model jev-1.13.0] [--gate 0.3] [--fits 0.6] [--reverse] [--cases …]
+ *   bun evals/run.ts [--model jev-1.13.0] [--gate 0.3] [--fits 0.5] [--reverse] [--cases …]
  *
  * The requests are built by hooks/policy.ts, so a change to a question there
  * is what gets measured. Answers are cached by request body in
@@ -49,7 +49,7 @@ if (!apiKey) throw new Error('TYPESAFE_API_KEY is not set')
 const policy: PolicyConfig = {
   shortlist: 3,
   gateThreshold: Number(arg('gate', '0.3')),
-  fitsThreshold: Number(arg('fits', '0.6')),
+  fitsThreshold: Number(arg('fits', '0.5')),
 }
 
 // The catalog, named the way the engine names it.

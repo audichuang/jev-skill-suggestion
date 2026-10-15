@@ -521,7 +521,7 @@ export const register: Register = (on, options) => {
   const policy: PolicyConfig = {
     shortlist: Math.max(1, Math.round(number('shortlist', 3))),
     gateThreshold: number('gateThreshold', 0.3),
-    fitsThreshold: number('fitsThreshold', 0.6),
+    fitsThreshold: number('fitsThreshold', 0.5),
   }
 
   // The names every skill_listing attachment carried so far. Once non-empty,
