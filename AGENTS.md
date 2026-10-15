@@ -24,6 +24,9 @@ Claude Code mod（hooks module plugin），fork 自 davila7/claude-code-template
 - `$.env.get('NAME')` 的參數必須是字面字串，傳變數 validator 會擋下來。`register(on, options)` 是同步函式，環境變數只能在第一個 hook 裡讀。
 - `skill.prompt` 事件沒有 `agentId`，分不出主對話和子代理，不要拿它做注入去重。
 - options 只從 user、`--settings`、managed 三種 settings 讀，不讀專案 settings。
+- `$` 只能傳給檔案頂層宣告的函式（function declaration 或綁定函式的 const）。傳給 `register()` 裡的閉包，validator 會擋。要共用的流程寫成頂層函式，狀態用參數傳進去，照 `choose($, state, …)` 的寫法。
+- `$.tool.register` 註冊的工具，參數直接攤在 `tool.call` 事件的頂層（`e.task`），沒有 `e.input`。完整名稱要用 `register()` 回傳的 `tool`，名稱會隨載入來源不同。
+- plugin 註冊的工具預設 `isDeferred: true`，會被放到 ToolSearch 後面，模型只看得到名字。要在 `tool.describe` 回傳 `isDeferred: false` 才會一開始就帶 schema 和描述。
 
 ## 上游與發版
 

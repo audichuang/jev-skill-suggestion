@@ -1,13 +1,14 @@
 import { expect, test } from 'claude-code/testing'
-import type { EngineInterface, Hook, Next, On, PromptSubmitInput } from 'claude-code'
+import type { EngineInterface, Hook, Next, On, PromptSubmitInput, SessionStartInput, ToolCallInput, ToolDescribeInput } from 'claude-code'
 import { register } from '../hooks/jev-skill-suggestion.ts'
 
 /** The mod's prompt.submit hook, registered with `options`, and a `$` that answers from memory. */
 function seat(options: Record<string, unknown>, world: { env?: Record<string, string>; files?: Record<string, string>; fits?: number }) {
-  let submit!: Hook<'prompt.submit'>
+  const hooks: Record<string, unknown> = {}
   register(((event: string, hook: unknown) => {
-    if (event === 'prompt.submit') submit = hook as Hook<'prompt.submit'>
+    hooks[event] = hook
   }) as On, { logDecisions: false, ...options })
+  const submit = hooks['prompt.submit'] as Hook<'prompt.submit'>
 
   const auth: string[] = []
   const files = world.files ?? {}
@@ -29,11 +30,12 @@ function seat(options: Record<string, unknown>, world: { env?: Record<string, st
     fs: { exists: async (path: string) => path in files, read: async (path: string) => files[path] as string },
     env: { get: async (name: string) => (world.env ?? {})[name] },
     session: { cwd: async () => '/work' },
+    tool: { register: async (spec: { name: string }) => ({ tool: `mcp__jev__${spec.name}` }) },
     ui: { log: () => {}, status: () => {} },
   } as unknown as EngineInterface
   const next = (async (e: PromptSubmitInput) => e) as unknown as Next<'prompt.submit'>
   const ask = (text: string) => submit($, { text, wait: false, origin: { kind: 'composer' } }, next)
-  return { ask, auth }
+  return { ask, auth, hooks, $ }
 }
 
 test('with no key option the key comes from TYPESAFE_API_KEY, and a bare go-ahead is never ranked', async () => {
@@ -60,4 +62,33 @@ test('a skill turned off in the user settings is never offered, under CLAUDE_CON
   )
   await ask('fix the failing tests')
   expect(auth).toEqual([])
+})
+
+test('find_skill is registered at session start, kept out of ToolSearch, and answers with the pick for the Skill tool', async () => {
+  const { hooks, $, auth } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
+  const pass = (async (e: unknown) => e) as never
+  await (hooks['session.start'] as Hook<'session.start'>)($, {} as SessionStartInput, pass)
+  const described = await (hooks['tool.describe'] as Hook<'tool.describe'>)(
+    $,
+    { tool: 'mcp__jev__find_skill', description: 'd' } as ToolDescribeInput,
+    pass,
+  )
+  expect('isDeferred' in described && described.isDeferred).toBe(false)
+  const other = await (hooks['tool.describe'] as Hook<'tool.describe'>)($, { tool: 'Bash', description: 'd' } as ToolDescribeInput, pass)
+  expect('isDeferred' in other).toBe(false)
+
+  const call = hooks['tool.call'] as Hook<'tool.call'>
+  const answer = await call($, { tool: 'mcp__jev__find_skill', tool_use_id: 't', task: 'fix the failing tests' } as unknown as ToolCallInput, pass)
+  expect(auth.length).toBe(2)
+  expect('result' in answer && String(answer.result)).toContain('skill: "test-runner"')
+  const bash = { tool: 'Bash', tool_use_id: 'b', command: 'ls' } as unknown as ToolCallInput
+  expect(await call($, bash, pass)).toBe(bash)
+})
+
+test('find_skill is not registered with findSkill off', async () => {
+  const { hooks, $ } = seat({ findSkill: false }, {})
+  const registered: unknown[] = []
+  const withSpy = { ...$, tool: { register: async (spec: unknown) => (registered.push(spec), { tool: 'x' }) } } as unknown as EngineInterface
+  await (hooks['session.start'] as Hook<'session.start'>)(withSpy, {} as SessionStartInput, (async (e: unknown) => e) as never)
+  expect(registered).toEqual([])
 })

@@ -12,7 +12,7 @@
  * skill at all, one to re-read the top few with their full text and let each
  * be rejected on its own. Either may come back empty-handed.
  *
- * Three hooks:
+ * The hooks:
  *   prompt.attachment  — the engine's `skill_listing` attachment is answered
  *                        with `{ text: null }` (left out) or trimmed to the
  *                        names in `alwaysListed`. Its names are remembered:
@@ -25,7 +25,16 @@
  *                        loads even when `skillOverrides` hides it from the
  *                        model, or with its name for the Skill tool
  *                        (`inject: "suggest"`).
- *   skill.prompt       — observation: whether the model took the suggestion,
+ *   session.start, tool.describe, tool.call
+ *                      — the `find_skill` tool: registered when the session
+ *                        starts, kept out of ToolSearch so the model sees its
+ *                        description, and answered by the same two requests
+ *                        on the sub-task the model names. The prompt.submit
+ *                        pick covers the prompt; this covers what turns up
+ *                        mid-turn, for a model that sees most skills by name
+ *                        only. It answers a name for the Skill tool, never a
+ *                        SKILL.md.
+ *   skill.prompt       — observation:whether the model took the suggestion,
  *                        or loaded a skill on its own. Also writes the prompt
  *                        of the plugin's own `/jev-skill-suggestion:setup`,
  *                        which hides every skill from the engine's listing
@@ -53,7 +62,8 @@
  *
  * Only the main conversation is handled. A subagent's own listing is left as
  * the engine renders it: its prompt is a tool call's argument, not a
- * `prompt.submit`, so nothing here could suggest for it.
+ * `prompt.submit`, so nothing here could suggest for it. `find_skill`, where a
+ * subagent is given it, is the exception (unverified: calls carry `agentId`).
  *
  * Every failure path is fail-open: a request that errors or runs past the
  * latency budget lets the prompt through with no suggestion, and the listing
@@ -70,10 +80,11 @@
  * description, and the opening of each shortlisted skill's SKILL.md are sent
  * to whichever backend the key belongs to.
  */
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 import {
   DEFAULT_BASE_URL,
   DEFAULT_MODEL,
+  FIND_SKILL_TOOL,
   NONE,
   SETUP_COMMAND,
   builtinWide,
@@ -92,6 +103,7 @@ import {
   displayIds,
   canonical,
   endpoint,
+  findSkillResult,
   injectionBlock,
   installPathsOf,
   parseListing,
@@ -129,6 +141,242 @@ const NOT_A_TASK = new Set([
   'observer',
   'observer-activity',
 ])
+
+/** A SKILL.md as found on disk. */
+type SkillFile = { path: string; markdown: string }
+
+/** What `choose` reads from the options, and the session state it shares with the hooks. */
+interface Chooser {
+  backendOf: (typesafeEnv: string | undefined, gatewayEnv: string | undefined) => {
+    active: Provider | null
+    apiKey: string
+    modelId: string
+    url: string
+  }
+  forced: string
+  files: Map<string, SkillFile | null>
+  neverSuggested: ReadonlySet<string>
+  logDecisions: boolean
+  timeoutMs: number
+  rerankTimeoutMs: number
+  rerankEnabled: boolean
+  excerptChars: number
+  policy: PolicyConfig
+  unusableReported: boolean
+  displayToId: Map<string, string> | null
+}
+
+/**
+ * Jev's pick for `text`, with the pick's SKILL.md when found, or null when
+ * the skills could not be listed or none is a candidate. `restrictTo`, when
+ * non-empty, keeps the candidates to those names: the listing's, for a pick
+ * the model will load with the Skill tool.
+ */
+async function choose(
+  $: EngineInterface,
+  s: Chooser,
+  text: string,
+  restrictTo: ReadonlySet<string>,
+): Promise<{ pick: Skill | null; reason: string; file: SkillFile | null } | null> {
+  const { active, apiKey, modelId, url } = s.backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
+
+  /** One request to the active backend, or null on timeout, error or a non-2xx. */
+  const ask = async (
+    prompt: string,
+    questions: Record<string, unknown>,
+    what: string,
+    budgetMs: number,
+  ): Promise<string | null> => {
+    if (!active) return null
+    try {
+      const response = await Promise.race([
+        $.http.fetch(url, {
+          method: 'POST',
+          headers: requestHeaders(active, apiKey, modelId),
+          body: requestBody(active, prompt, questions, modelId),
+        }),
+        $.clock.sleep(budgetMs),
+      ])
+      if (response && response.ok) return response.text
+      if (response) $.ui.log(`[jev-skill-suggestion] ${active} responded ${response.status} to the ${what}`)
+      else $.ui.log(`[jev-skill-suggestion] ${what} passed ${budgetMs}ms; no suggestion`)
+    } catch (error) {
+      $.ui.log(`[jev-skill-suggestion] ${what} failed: ${String(error)}`)
+    }
+    return null
+  }
+
+  /** A skill's file, found on disk by Claude Code's layout, or null. */
+  const fileOf = async (
+    skill: Skill,
+    plugin: string | undefined,
+  ): Promise<SkillFile | null> => {
+    const cached = s.files.get(skill.name)
+    if (cached !== undefined) return cached
+    let found: SkillFile | null = null
+    try {
+      const home = (await $.env.get('HOME')) ?? ''
+      const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
+      const relative = skillFileCandidates(skill.name, plugin)
+      // The engine reads the project's `.claude/` (the working directory
+      // only, not its ancestors) and the user's config dir.
+      const candidates = [...relative, ...(configDir ? relative.map((file) => underConfigDir(configDir, file)) : [])]
+      if (plugin && configDir) {
+        const installed = `${configDir}/plugins/installed_plugins.json`
+        if (await $.fs.exists(installed)) {
+          for (const path of installPathsOf(await $.fs.read(installed), plugin)) {
+            candidates.push(...pluginFileCandidates(path, skill.name, plugin))
+          }
+        }
+      }
+      // A claude.ai-synced skill sits under an account directory only
+      // `$.fs.list` can name.
+      if (configDir) {
+        const synced = `${configDir}/skills/synced`
+        if (await $.fs.exists(synced)) {
+          const accounts = (await $.fs.list(synced)).filter((entry) => entry.kind === 'dir').map((entry) => entry.name)
+          candidates.push(...syncedFileCandidates(configDir, accounts, skill.name))
+        }
+      }
+      for (const file of candidates) {
+        if (await $.fs.exists(file)) {
+          found = { path: file, markdown: await $.fs.read(file) }
+          break
+        }
+      }
+    } catch (error) {
+      $.ui.log(`[jev-skill-suggestion] could not read /${skill.name}: ${String(error)}`)
+    }
+    s.files.set(skill.name, found)
+    return found
+  }
+  /** The opening of a skill's body, or null when its file is nowhere. */
+  const bodyOf = async (skill: Skill, plugin: string | undefined): Promise<string | null> =>
+    (await fileOf(skill, plugin))?.markdown ?? null
+
+  if (!s.unusableReported && !active) {
+    s.unusableReported = true
+    $.ui.log(`[jev-skill-suggestion] provider "${s.forced}" has no key set; using the built-in classifier`)
+  }
+
+  let commands: Awaited<ReturnType<typeof $.command.list>>
+  try {
+    commands = await $.command.list()
+    if (!s.displayToId && commands.some((command) => !commandLike(command.name))) {
+      const found: { dir: string; markdown: string }[] = []
+      const home = (await $.env.get('HOME')) ?? ''
+      const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
+      for (const dir of [`${await $.session.cwd()}/.claude/skills`, configDir && `${configDir}/skills`]) {
+        if (!dir || !(await $.fs.exists(dir))) continue
+        for (const entry of await $.fs.list(dir)) {
+          const file = `${dir}/${entry.name}/SKILL.md`
+          if (entry.kind === 'dir' && (await $.fs.exists(file))) found.push({ dir: entry.name, markdown: await $.fs.read(file) })
+        }
+      }
+      s.displayToId = displayIds(found)
+    }
+    commands = canonical(commands, s.displayToId ?? new Map())
+  } catch (error) {
+    $.ui.log(`[jev-skill-suggestion] could not list the skills: ${String(error)}`)
+    return null
+  }
+  // Loading the skill itself, the mod is not bound to what the engine would
+  // list, but a skill the person turned `off` stays off: the overrides are
+  // read from the user settings on every prompt, so an edit counts at once.
+  const off = new Set<string>()
+  try {
+    const configDir = configDirOf((await $.env.get('HOME')) ?? '~', await $.env.get('CLAUDE_CONFIG_DIR'))
+    const settingsPath = `${configDir}/settings.json`
+    if (await $.fs.exists(settingsPath)) {
+      const { skillOverrides } = readSkillSettings(await $.fs.read(settingsPath))
+      for (const [name, state] of Object.entries(skillOverrides)) if (state === 'off') off.add(name)
+    }
+  } catch (error) {
+    $.ui.log(`[jev-skill-suggestion] could not read the skill overrides: ${String(error)}`)
+  }
+  const skills = catalog(commands, restrictTo, new Set([...s.neverSuggested, ...off]))
+  if (skills.length === 0) {
+    if (s.logDecisions) $.ui.log('[jev-skill-suggestion] no candidate skills; nothing to suggest')
+    return null
+  }
+  const pluginOf = new Map(commands.map((command) => [command.name, command.plugin]))
+
+  // Request 1: rank everything, and ask whether the prompt wants a skill at all.
+  const startedAt = await $.clock.now()
+  let wide: Wide | null = null
+  if (active) {
+    const answer = await ask(text, wideQuestions(active, skills), 'ranking', s.timeoutMs)
+    if (answer) wide = readWide(answer)
+  } else {
+    // No backend: the engine's own small-model classifier answers the same
+    // question, with the descriptions folded into the text it reads. One
+    // label, no gate, no rerank.
+    try {
+      const label = await $.model.classify(classifyText(text, skills), [
+        NONE,
+        ...skills.map((skill) => skill.name),
+      ])
+      wide = builtinWide(label)
+    } catch (error) {
+      $.ui.log(`[jev-skill-suggestion] built-in classifier failed: ${String(error)}`)
+    }
+  }
+  // What the decision model actually answered, whatever the s.policy then
+  // does with it. This is the line that proves the ranking ran.
+  if (s.logDecisions) {
+    const ms = (await $.clock.now()) - startedAt
+    $.ui.log(`[jev-skill-suggestion] jev: ${describeWide(wide, skills.length, ms)}`)
+  }
+
+  // Request 2: re-read the shortlist with each skill's full text, and let
+  // every candidate be rejected on its own.
+  let rerank: Rerank | null = null
+  let rerankAttempted = false
+  // Before the listing has been seen, `$.command.list()` may name a skill
+  // the model is not allowed to invoke; its own frontmatter tells.
+  const barred: string[] = []
+  if (active && s.rerankEnabled && wide && passesGate(wide, s.policy)) {
+    const candidates: Candidate[] = []
+    for (const skill of shortlistOf(wide, skills, s.policy.shortlist)) {
+      const body = await bodyOf(skill, pluginOf.get(skill.name))
+      if (!modelInvocable(body)) {
+        barred.push(skill.name)
+        continue
+      }
+      candidates.push({ ...skill, detail: detailOf(skill, body, s.excerptChars) })
+    }
+    if (candidates.length > 0) {
+      const rerankStartedAt = await $.clock.now()
+      rerankAttempted = true
+      const answer = await ask(text, rerankQuestions(active, candidates), 'rerank', s.rerankTimeoutMs)
+      if (answer) rerank = readRerank(answer)
+      if (s.logDecisions) {
+        const ms = (await $.clock.now()) - rerankStartedAt
+        const read = candidates.filter((candidate) => s.files.get(candidate.name)).length
+        $.ui.log(
+          `[jev-skill-suggestion] jev: ${describeRerank(rerank, ms)} · ${read}/${candidates.length} bodies read`,
+        )
+      }
+    }
+  }
+
+  const offered = barred.length > 0 ? skills.filter((skill) => !barred.includes(skill.name)) : skills
+  let decision = decide(wide, rerank, offered, s.policy, rerankAttempted)
+  let pick = decision.name ? (skills.find((skill) => skill.name === decision.name) ?? null) : null
+  // The winner's own frontmatter has the last word, whichever path picked it.
+  if (pick && !barred.includes(pick.name) && !modelInvocable(await bodyOf(pick, pluginOf.get(pick.name)))) {
+    barred.push(pick.name)
+    decision = { name: null, reason: `/${pick.name} has disable-model-invocation` }
+    pick = null
+  }
+  if (s.logDecisions && barred.length > 0) {
+    $.ui.log(
+      `[jev-skill-suggestion] not model-invocable, left out: ${barred.map((name) => `/${name}`).join(', ')}`,
+    )
+  }
+  const file = pick ? await fileOf(pick, pluginOf.get(pick.name)) : null
+  return { pick, reason: decision.reason, file }
+}
 
 export const register: Register = (on, options) => {
   const text = (key: string, fallback: string) =>
@@ -172,10 +420,6 @@ export const register: Register = (on, options) => {
     return backend
   }
 
-  // A backend named in the options but missing its key degrades to the
-  // built-in classifier, which is silent; say so once, when a hook first runs.
-  let unusableReported = forced === 'auto' || forced === 'builtin'
-
   // The listing stays by default: `name-only` overrides (what the setup
   // writes) already take the descriptions out, and a listed name is what lets
   // the model load a skill another skill names.
@@ -194,6 +438,7 @@ export const register: Register = (on, options) => {
   // question per candidate, so it gets its own, longer budget.
   const rerankTimeoutMs = number('rerankTimeoutMs', 2500)
   const logDecisions = flag('logDecisions', true)
+  const findSkill = flag('findSkill', true)
   const policy: PolicyConfig = {
     shortlist: Math.max(1, Math.round(number('shortlist', 3))),
     gateThreshold: number('gateThreshold', 0.3),
@@ -222,12 +467,27 @@ export const register: Register = (on, options) => {
   // The setup hint, once per session.
   let hintedSetup = false
 
-  // A skill whose frontmatter `name:` has spaces ("PocketBase API Rules") is
-  // reported by `$.command.list()` under that name, but the engine lists,
-  // runs and overrides it by its directory name (`pb-api-rules`). The map
-  // from one to the other is read from disk once per session, in whichever
-  // hook first needs it.
-  let displayToId: Map<string, string> | null = null
+  const state: Chooser = {
+    backendOf,
+    forced,
+    files,
+    neverSuggested,
+    logDecisions,
+    timeoutMs,
+    rerankTimeoutMs,
+    rerankEnabled,
+    excerptChars,
+    policy,
+    // A backend named in the options but missing its key degrades to the
+    // built-in classifier, which is silent; say so once, when a hook first runs.
+    unusableReported: forced === 'auto' || forced === 'builtin',
+    // A skill whose frontmatter `name:` has spaces ("PocketBase API Rules") is
+    // reported by `$.command.list()` under that name, but the engine lists,
+    // runs and overrides it by its directory name (`pb-api-rules`). The map
+    // from one to the other is read from disk once per session, in whichever
+    // hook first needs it.
+    displayToId: null,
+  }
 
   on('prompt.attachment', { type: 'skill_listing' }, async ($, e, next) => {
     if (!announced) {
@@ -271,6 +531,7 @@ export const register: Register = (on, options) => {
     return { text: kept }
   })
 
+
   on('prompt.submit', async ($, e, next) => {
     if (!announced) {
       announced = true
@@ -290,216 +551,25 @@ export const register: Register = (on, options) => {
       if (logDecisions) $.ui.log('[jev-skill-suggestion] no suggestion: a reply with no task of its own')
       return next(e)
     }
-    const { active, apiKey, modelId, url } = backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
 
-    /** One request to the active backend, or null on timeout, error or a non-2xx. */
-    const ask = async (
-      prompt: string,
-      questions: Record<string, unknown>,
-      what: string,
-      budgetMs: number,
-    ): Promise<string | null> => {
-      if (!active) return null
-      try {
-        const response = await Promise.race([
-          $.http.fetch(url, {
-            method: 'POST',
-            headers: requestHeaders(active, apiKey, modelId),
-            body: requestBody(active, prompt, questions, modelId),
-          }),
-          $.clock.sleep(budgetMs),
-        ])
-        if (response && response.ok) return response.text
-        if (response) $.ui.log(`[jev-skill-suggestion] ${active} responded ${response.status} to the ${what}`)
-        else $.ui.log(`[jev-skill-suggestion] ${what} passed ${budgetMs}ms; no suggestion`)
-      } catch (error) {
-        $.ui.log(`[jev-skill-suggestion] ${what} failed: ${String(error)}`)
-      }
-      return null
-    }
-
-    /** A skill's file, found on disk by Claude Code's layout, or null. */
-    const fileOf = async (
-      skill: Skill,
-      plugin: string | undefined,
-    ): Promise<{ path: string; markdown: string } | null> => {
-      const cached = files.get(skill.name)
-      if (cached !== undefined) return cached
-      let found: { path: string; markdown: string } | null = null
-      try {
-        const home = (await $.env.get('HOME')) ?? ''
-        const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
-        const relative = skillFileCandidates(skill.name, plugin)
-        // The engine reads the project's `.claude/` (the working directory
-        // only, not its ancestors) and the user's config dir.
-        const candidates = [...relative, ...(configDir ? relative.map((file) => underConfigDir(configDir, file)) : [])]
-        if (plugin && configDir) {
-          const installed = `${configDir}/plugins/installed_plugins.json`
-          if (await $.fs.exists(installed)) {
-            for (const path of installPathsOf(await $.fs.read(installed), plugin)) {
-              candidates.push(...pluginFileCandidates(path, skill.name, plugin))
-            }
-          }
-        }
-        // A claude.ai-synced skill sits under an account directory only
-        // `$.fs.list` can name.
-        if (configDir) {
-          const synced = `${configDir}/skills/synced`
-          if (await $.fs.exists(synced)) {
-            const accounts = (await $.fs.list(synced)).filter((entry) => entry.kind === 'dir').map((entry) => entry.name)
-            candidates.push(...syncedFileCandidates(configDir, accounts, skill.name))
-          }
-        }
-        for (const file of candidates) {
-          if (await $.fs.exists(file)) {
-            found = { path: file, markdown: await $.fs.read(file) }
-            break
-          }
-        }
-      } catch (error) {
-        $.ui.log(`[jev-skill-suggestion] could not read /${skill.name}: ${String(error)}`)
-      }
-      files.set(skill.name, found)
-      return found
-    }
-    /** The opening of a skill's body, or null when its file is nowhere. */
-    const bodyOf = async (skill: Skill, plugin: string | undefined): Promise<string | null> =>
-      (await fileOf(skill, plugin))?.markdown ?? null
-
-    if (!unusableReported && !active) {
-      unusableReported = true
-      $.ui.log(`[jev-skill-suggestion] provider "${forced}" has no key set; using the built-in classifier`)
-    }
-
-    let commands: Awaited<ReturnType<typeof $.command.list>>
-    try {
-      commands = await $.command.list()
-      if (!displayToId && commands.some((command) => !commandLike(command.name))) {
-        const found: { dir: string; markdown: string }[] = []
-        const home = (await $.env.get('HOME')) ?? ''
-        const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
-        for (const dir of [`${await $.session.cwd()}/.claude/skills`, configDir && `${configDir}/skills`]) {
-          if (!dir || !(await $.fs.exists(dir))) continue
-          for (const entry of await $.fs.list(dir)) {
-            const file = `${dir}/${entry.name}/SKILL.md`
-            if (entry.kind === 'dir' && (await $.fs.exists(file))) found.push({ dir: entry.name, markdown: await $.fs.read(file) })
-          }
-        }
-        displayToId = displayIds(found)
-      }
-      commands = canonical(commands, displayToId ?? new Map())
-    } catch (error) {
-      $.ui.log(`[jev-skill-suggestion] could not list the skills: ${String(error)}`)
-      return next(e)
-    }
-    // Loading the skill itself, the mod is not bound to what the engine would
-    // list, but a skill the person turned `off` stays off: the overrides are
-    // read from the user settings on every prompt, so an edit counts at once.
-    const off = new Set<string>()
-    try {
-      const configDir = configDirOf((await $.env.get('HOME')) ?? '~', await $.env.get('CLAUDE_CONFIG_DIR'))
-      const settingsPath = `${configDir}/settings.json`
-      if (await $.fs.exists(settingsPath)) {
-        const { skillOverrides } = readSkillSettings(await $.fs.read(settingsPath))
-        for (const [name, state] of Object.entries(skillOverrides)) if (state === 'off') off.add(name)
-      }
-    } catch (error) {
-      $.ui.log(`[jev-skill-suggestion] could not read the skill overrides: ${String(error)}`)
-    }
-    const skills = catalog(commands, injectContent ? new Set() : listed, new Set([...neverSuggested, ...off]))
-    if (skills.length === 0) {
-      if (logDecisions) $.ui.log('[jev-skill-suggestion] no candidate skills; nothing to suggest')
-      return next(e)
-    }
-    const pluginOf = new Map(commands.map((command) => [command.name, command.plugin]))
-
-    // Request 1: rank everything, and ask whether the prompt wants a skill at all.
-    const startedAt = await $.clock.now()
-    let wide: Wide | null = null
-    if (active) {
-      const answer = await ask(e.text, wideQuestions(active, skills), 'ranking', timeoutMs)
-      if (answer) wide = readWide(answer)
-    } else {
-      // No backend: the engine's own small-model classifier answers the same
-      // question, with the descriptions folded into the text it reads. One
-      // label, no gate, no rerank.
-      try {
-        const label = await $.model.classify(classifyText(e.text, skills), [
-          NONE,
-          ...skills.map((skill) => skill.name),
-        ])
-        wide = builtinWide(label)
-      } catch (error) {
-        $.ui.log(`[jev-skill-suggestion] built-in classifier failed: ${String(error)}`)
-      }
-    }
-    // What the decision model actually answered, whatever the policy then
-    // does with it. This is the line that proves the ranking ran.
-    if (logDecisions) {
-      const ms = (await $.clock.now()) - startedAt
-      $.ui.log(`[jev-skill-suggestion] jev: ${describeWide(wide, skills.length, ms)}`)
-    }
-
-    // Request 2: re-read the shortlist with each skill's full text, and let
-    // every candidate be rejected on its own.
-    let rerank: Rerank | null = null
-    let rerankAttempted = false
-    // Before the listing has been seen, `$.command.list()` may name a skill
-    // the model is not allowed to invoke; its own frontmatter tells.
-    const barred: string[] = []
-    if (active && rerankEnabled && wide && passesGate(wide, policy)) {
-      const candidates: Candidate[] = []
-      for (const skill of shortlistOf(wide, skills, policy.shortlist)) {
-        const body = await bodyOf(skill, pluginOf.get(skill.name))
-        if (!modelInvocable(body)) {
-          barred.push(skill.name)
-          continue
-        }
-        candidates.push({ ...skill, detail: detailOf(skill, body, excerptChars) })
-      }
-      if (candidates.length > 0) {
-        const rerankStartedAt = await $.clock.now()
-        rerankAttempted = true
-        const answer = await ask(e.text, rerankQuestions(active, candidates), 'rerank', rerankTimeoutMs)
-        if (answer) rerank = readRerank(answer)
-        if (logDecisions) {
-          const ms = (await $.clock.now()) - rerankStartedAt
-          const read = candidates.filter((candidate) => files.get(candidate.name)).length
-          $.ui.log(
-            `[jev-skill-suggestion] jev: ${describeRerank(rerank, ms)} · ${read}/${candidates.length} bodies read`,
-          )
-        }
-      }
-    }
-
-    const offered = barred.length > 0 ? skills.filter((skill) => !barred.includes(skill.name)) : skills
-    let decision = decide(wide, rerank, offered, policy, rerankAttempted)
-    let pick = decision.name ? (skills.find((skill) => skill.name === decision.name) ?? null) : null
-    // The winner's own frontmatter has the last word, whichever path picked it.
-    if (pick && !barred.includes(pick.name) && !modelInvocable(await bodyOf(pick, pluginOf.get(pick.name)))) {
-      barred.push(pick.name)
-      decision = { name: null, reason: `/${pick.name} has disable-model-invocation` }
-      pick = null
-    }
-    if (logDecisions && barred.length > 0) {
-      $.ui.log(
-        `[jev-skill-suggestion] not model-invocable, left out: ${barred.map((name) => `/${name}`).join(', ')}`,
-      )
-    }
+    // Content mode loads the skill itself, so it is not bound to what the
+    // engine lists; "suggest" leaves loading to the Skill tool, which is.
+    const choice = await choose($, state, e.text, injectContent ? new Set() : listed)
+    if (!choice) return next(e)
+    const { pick, file } = choice
     // A row in the transcript scrolls away; this line stays on screen.
     if (logDecisions) $.ui.status(describeStatus(pick?.name ?? null))
     if (logDecisions) {
       $.ui.log(
         pick
-          ? `[jev-skill-suggestion] suggesting /${pick.name}: ${decision.reason}`
-          : `[jev-skill-suggestion] no suggestion: ${decision.reason}`,
+          ? `[jev-skill-suggestion] suggesting /${pick.name}: ${choice.reason}`
+          : `[jev-skill-suggestion] no suggestion: ${choice.reason}`,
       )
     }
 
     suggested = pick?.name ?? null
     let block: string | null
     if (injectContent && pick) {
-      const file = await fileOf(pick, pluginOf.get(pick.name))
       const projectDir = await $.session.cwd()
       block = injectionBlock(pick, file?.markdown ?? null, file?.path ?? null, projectDir, injected.has(pick.name))
       if (logDecisions) {
@@ -538,6 +608,48 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // find_skill: the prompt's suggestion is made once, from the prompt alone;
+  // a sub-task that turns up mid-turn is the model's to look up. Registered
+  // at session.start so the tool list, and the prompt cache, stay put; the
+  // full name is the engine's (it depends on how the plugin was loaded).
+  let findSkillName = ''
+  on('session.start', async ($, e, next) => {
+    if (findSkill) {
+      try {
+        findSkillName = (await $.tool.register(FIND_SKILL_TOOL)).tool
+      } catch (error) {
+        $.ui.log(`[jev-skill-suggestion] could not register find_skill: ${String(error)}`)
+      }
+    }
+    return next(e)
+  })
+  // Left to the engine, a plugin's tool waits behind ToolSearch, named but
+  // without its description: the model would have to guess at it, which is
+  // the very thing the tool is for.
+  on('tool.describe', async ($, e, next) => {
+    const out = await next(e)
+    return findSkillName && e.tool === findSkillName ? { ...out, isDeferred: false } : out
+  })
+  on('tool.call', async ($, e, next) => {
+    if (!findSkillName || e.tool !== findSkillName) return next(e)
+    const task = 'task' in e && typeof e.task === 'string' ? e.task.trim() : ''
+    let pick: Skill | null = null
+    try {
+      // The model loads the answer with the Skill tool, so only what the
+      // engine lists is offered.
+      if (task) pick = (await choose($, state, task, listed))?.pick ?? null
+    } catch (error) {
+      $.ui.log(`[jev-skill-suggestion] find_skill failed: ${String(error)}`)
+    }
+    if (logDecisions) {
+      $.ui.log(
+        `[jev-skill-suggestion] find_skill${e.agentId ? ` (${e.agentId})` : ''} "${task}": ${pick ? `suggesting /${pick.name}` : 'no suggestion'}`,
+      )
+    }
+    if (pick) suggested = pick.name
+    return { result: findSkillResult(pick) }
+  })
+
   on('skill.prompt', { skill: 'jev-skill-suggestion:setup' }, async ($, e, next) => {
     // The plugin's own setup command: its markdown is a placeholder, and the
     // prompt the model reads is written here, from the roster as the engine
@@ -549,7 +661,7 @@ export const register: Register = (on, options) => {
     let commands: Awaited<ReturnType<typeof $.command.list>> = []
     try {
       commands = await $.command.list()
-      if (!displayToId && commands.some((command) => !commandLike(command.name))) {
+      if (!state.displayToId && commands.some((command) => !commandLike(command.name))) {
         const found: { dir: string; markdown: string }[] = []
         const home = (await $.env.get('HOME')) ?? ''
         const configDir = home ? configDirOf(home, await $.env.get('CLAUDE_CONFIG_DIR')) : ''
@@ -560,9 +672,9 @@ export const register: Register = (on, options) => {
             if (entry.kind === 'dir' && (await $.fs.exists(file))) found.push({ dir: entry.name, markdown: await $.fs.read(file) })
           }
         }
-        displayToId = displayIds(found)
+        state.displayToId = displayIds(found)
       }
-      commands = canonical(commands, displayToId ?? new Map())
+      commands = canonical(commands, state.displayToId ?? new Map())
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] setup: could not list the skills: ${String(error)}`)
       return next({ ...e, text: setupAborted(`the skills could not be listed (${String(error)})`) })

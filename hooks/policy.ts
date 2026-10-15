@@ -733,6 +733,38 @@ export function suggestionBlock(suggested: Skill | null, hidden: boolean): strin
   return lines.join('\n')
 }
 
+/**
+ * The tool the model calls mid-turn, when a sub-task starts that the prompt's
+ * own suggestion did not cover. Worded as facts, not orders: text that reads
+ * like a command can trip the model's prompt-injection defences.
+ */
+export const FIND_SKILL_TOOL = {
+  name: 'find_skill',
+  description:
+    'Finds which installed skill fits a sub-task. The skill listing names most skills without a description; ' +
+    'this tool reads their descriptions and SKILL.md and answers with at most one skill, to load with the Skill tool, or none. ' +
+    'Useful when a new sub-task starts partway through the work (the next step of a plan, a new kind of file, tool or service) ' +
+    'and no skill already loaded covers it. Pass the sub-task in one sentence.',
+  inputSchema: {
+    type: 'object',
+    properties: { task: { type: 'string', description: 'The sub-task, in one sentence.' } },
+    required: ['task'],
+  },
+}
+
+/**
+ * What `find_skill` answers: the pick with the description the listing left
+ * out, or a plain "none". Never a SKILL.md: the model loads the skill with the
+ * Skill tool, which re-attaches it after a compaction.
+ */
+export function findSkillResult(pick: Skill | null): string {
+  if (!pick) return 'No installed skill fits this sub-task.'
+  return [
+    `${line(pick)}`,
+    `Load it with the Skill tool (skill: "${pick.name}") if it fits the sub-task; ignore it if it does not.`,
+  ].join('\n')
+}
+
 /** A number for the log, or `n/d` when the backend reported none. */
 function reported(value: number | null): string {
   return value === null ? 'n/d' : value.toFixed(2)

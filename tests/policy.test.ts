@@ -10,6 +10,7 @@ import {
   describeSetup,
   describeStatus,
   describeWide,
+  findSkillResult,
   detailOf,
   modelInvocable,
   endpoint,
@@ -490,4 +491,11 @@ test('only a file with the backup\'s own shape is treated as a reusable backup',
   expect(validBackup('{"skillOverrides":{}}')).toBe(false)
   expect(validBackup('{nope')).toBe(false)
   expect(validBackup('[]')).toBe(false)
+})
+
+test('findSkillResult names the pick with its description for the Skill tool, and says none plainly', () => {
+  const text = findSkillResult({ name: 'pdf', description: 'Read and edit PDF files' })
+  expect(text).toContain('- pdf: Read and edit PDF files')
+  expect(text).toContain('skill: "pdf"')
+  expect(findSkillResult(null)).toBe('No installed skill fits this sub-task.')
 })

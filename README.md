@@ -18,7 +18,7 @@ Claude Code has a gentler state: `"name-only"` in `skillOverrides` keeps the ski
 
 ## Install
 
-Requires Claude Code 2.1.287 or newer (mods load by default from there).
+Requires Claude Code 2.1.287 or newer (mods load by default from there). The `find_skill` tool was verified on 2.1.299.
 
 **From the marketplace** (any machine):
 
@@ -81,9 +81,12 @@ Send a prompt in any project. The transcript should show:
 |---|---|
 | `prompt.submit` | Runs the two requests below on the prompt you sent. It attaches the winner, if any, as a `<skill_relevance>` block the model reads and you never see. With `inject: "content"` (the default) the block holds the skill's `SKILL.md`; with `inject: "suggest"` it holds only the name, and the model loads the skill itself. |
 | `prompt.attachment` on `skill_listing` | Leaves the listing alone by default. With `hideListing: true` it withholds the listing, or trims it to the names in `alwaysListed`. |
+| `session.start`, `tool.describe`, `tool.call` | The `find_skill` tool (see below): registered when the session starts, kept out of ToolSearch so the model sees its description from the first request, and answered with the same two requests. |
 | `skill.prompt` | Logs whether a skill the model loaded was the suggested one, and writes the prompt of `/jev-skill-suggestion:setup`. |
 
-**When it decides.** Once per prompt you send, from that prompt's text alone. It does not decide again during the turn. Everything after that is the model's own choice from the listing, so a skill that hands off to another skill, or a subagent that needs one, works as it does without the mod.
+**When it decides.** Once per prompt you send, from that prompt's text alone. A long turn can run into sub-tasks the prompt never named, and with `name-only` the model sees those skills by name only. For that, the mod gives the model a `find_skill` tool. The model calls it with the sub-task in one sentence, and Jev answers with at most one skill: its name and the description the listing leaves out. The model then loads it with the Skill tool, or ignores it. Nothing is pushed mid-turn. A skill that hands off to another skill works as it does without the mod.
+
+`find_skill` offers only skills the listing names, because the Skill tool loads only those. It answers a name and never a SKILL.md: a skill loaded with the Skill tool is attached again after a compaction, and one attached by the mod is not. `findSkill: false` turns the tool off. The tool's description and schema cost about 160 tokens in every session.
 
 **What it attaches:**
 
@@ -154,6 +157,7 @@ With `logDecisions` on (the default), the mod reports every step of its own work
 - The two `jev:` lines are what the decision model replied to each request, before any policy is applied — the gate, the top of the ranking, then the rerank's winner and every `fits`, with how long each call took and how many SKILL.md bodies were found.
 - `injected /name from <file>` is the skill going in with the prompt; `already injected this session; named again` on a repeat.
 - `withheld the skill listing` appears only with `hideListing: true`: the listing hook firing, with what it cost the context and what it kept. While some listed skills still bring their whole description, the mod adds `N skills are still listed with a full description; run /jev-skill-suggestion:setup …` once per session.
+- `find_skill "<sub-task>": suggesting /name` (or `no suggestion`) is the model calling `find_skill` mid-turn, after the same `jev:` lines.
 - `skill /name loaded` is the model calling the Skill tool on its own (`inject: "suggest"`, or a typed `/name`): `as suggested`, or which skill was suggested instead when it reached for another.
 
 It also keeps a one-line status on screen, replaced as it goes:
@@ -198,6 +202,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
   neverSuggested:   string  comma-separated names never offered to the decision model
   timeoutMs:        number  latency budget for the ranking request (default 800)
   rerankTimeoutMs:  number  latency budget for the rerank request (default 2500)
+  findSkill:        boolean give the model the find_skill tool for mid-turn sub-tasks (default true)
   logDecisions:     boolean log each decision (default true)
 ```
 
@@ -215,6 +220,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
 | Settings, skills, plugin records and the backup follow `CLAUDE_CONFIG_DIR`. | [#1042](https://github.com/davila7/claude-code-templates/pull/1042) |
 | Replies with no task of their own (`ok`, `2`, `繼續`) are not ranked. | [#1081](https://github.com/davila7/claude-code-templates/pull/1081) |
 | Skills set to `off` are never injected. | — |
+| A `find_skill` tool lets the model ask Jev mid-turn, so a sub-task that turns up after the prompt is not left to a guess from bare names. | — |
 
 To see upstream's later changes: `gh api "repos/davila7/claude-code-templates/commits?path=cli-tool/components/mods/productivity/jev-skill-suggestion"`, then diff the new upstream copy against the `upstream-*` tag.
 
