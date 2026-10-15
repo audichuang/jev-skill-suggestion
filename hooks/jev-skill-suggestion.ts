@@ -114,6 +114,7 @@ import {
   readSkillSettings,
   modelInvocable,
   readWide,
+  recordLine,
   rerankQuestions,
   requestBody,
   requestHeaders,
@@ -156,6 +157,10 @@ interface Choice {
   file: SkillFile | null
   /** False when a request failed or timed out: "no pick" is then not an answer. */
   answered: boolean
+  /** What the requests answered, for the record file. */
+  wide: Wide | null
+  rerank: Rerank | null
+  ms: number
 }
 
 /** What `choose` reads from the options, and the session state it shares with the hooks. */
@@ -164,6 +169,7 @@ interface ChooseContext {
   readonly forced: string
   readonly neverSuggested: ReadonlySet<string>
   readonly logDecisions: boolean
+  readonly recordDecisions: boolean
   readonly timeoutMs: number
   readonly rerankTimeoutMs: number
   readonly rerankEnabled: boolean
@@ -173,6 +179,40 @@ interface ChooseContext {
   files: Map<string, SkillFile | null>
   unusableReported: boolean
   displayToId: Map<string, string> | null
+  /** Each session's record file as written so far, by session id. */
+  records: Map<string, string>
+}
+
+/** A Choice's fields the record file keeps, beside the source, text and pick. */
+function traceOf({ reason, answered, wide, rerank, ms }: Choice) {
+  return { reason, answered, wide, rerank, ms }
+}
+
+/** A record file stops growing here, under `$.fs`'s 4 MiB per read and write. */
+const RECORD_LIMIT = 3_500_000
+
+/**
+ * Appends one line to the session's record file,
+ * `<config dir>/jev-skill-suggestion/decisions/<session id>.jsonl`. `$.fs`
+ * writes whole files, so the content so far is kept in memory, read back from
+ * disk the first time (a resumed session). Fails open, like everything else.
+ */
+async function record($: EngineInterface, ctx: ChooseContext, entry: Parameters<typeof recordLine>[1]) {
+  if (!ctx.recordDecisions) return
+  try {
+    const configDir = await configDirFor($)
+    if (!configDir) return
+    const id = await $.session.id()
+    const path = `${configDir}/jev-skill-suggestion/decisions/${id}.jsonl`
+    let content = ctx.records.get(id)
+    if (content === undefined) content = (await $.fs.exists(path)) ? await $.fs.read(path) : ''
+    const next = content + recordLine(await $.clock.now(), entry)
+    if (next.length > RECORD_LIMIT) return
+    ctx.records.set(id, next)
+    await $.fs.write(path, next)
+  } catch (error) {
+    $.ui.log(`[jev-skill-suggestion] could not record the decision: ${String(error)}`)
+  }
 }
 
 /** The user's config dir, or '' when HOME is unset and it cannot be named. */
@@ -313,7 +353,9 @@ async function choose(
     $.ui.log(`[jev-skill-suggestion] could not read the skill overrides: ${String(error)}`)
   }
   const skills = catalog(commands, restrictTo, new Set([...ctx.neverSuggested, ...off]))
-  if (skills.length === 0) return { pick: null, reason: 'no candidate skills', file: null, answered: true }
+  if (skills.length === 0) {
+    return { pick: null, reason: 'no candidate skills', file: null, answered: true, wide: null, rerank: null, ms: 0 }
+  }
   const pluginOf = new Map(commands.map((command) => [command.name, command.plugin]))
 
   // Request 1: rank everything, and ask whether the prompt wants a skill at all.
@@ -397,7 +439,15 @@ async function choose(
     )
   }
   const file = pick ? await fileOf(pick, pluginOf.get(pick.name)) : null
-  return { pick, reason: decision.reason, file, answered: wide !== null && (!rerankAttempted || rerank !== null) }
+  return {
+    pick,
+    reason: decision.reason,
+    file,
+    answered: wide !== null && (!rerankAttempted || rerank !== null),
+    wide,
+    rerank,
+    ms: (await $.clock.now()) - startedAt,
+  }
 }
 
 export const register: Register = (on, options) => {
@@ -459,6 +509,7 @@ export const register: Register = (on, options) => {
   // question per candidate, so it gets its own, longer budget.
   const rerankTimeoutMs = number('rerankTimeoutMs', 2500)
   const logDecisions = flag('logDecisions', true)
+  const recordDecisions = flag('recordDecisions', true)
   const findSkill = flag('findSkill', true)
   const policy: PolicyConfig = {
     shortlist: Math.max(1, Math.round(number('shortlist', 3))),
@@ -494,6 +545,7 @@ export const register: Register = (on, options) => {
     files,
     neverSuggested,
     logDecisions,
+    recordDecisions,
     timeoutMs,
     rerankTimeoutMs,
     rerankEnabled,
@@ -508,6 +560,7 @@ export const register: Register = (on, options) => {
     // from one to the other is read from disk once per session, in whichever
     // hook first needs it.
     displayToId: null,
+    records: new Map(),
   }
 
   on('prompt.attachment', { type: 'skill_listing' }, async ($, e, next) => {
@@ -578,6 +631,7 @@ export const register: Register = (on, options) => {
     const choice = await choose($, state, e.text, { restrictTo: injectContent ? new Set() : listed, askGate: true })
     if (!choice) return next(e)
     const { pick, file } = choice
+    await record($, state, { source: 'prompt', text: e.text, pick: pick?.name ?? null, ...traceOf(choice) })
     // A row in the transcript scrolls away; this line stays on screen.
     if (logDecisions) $.ui.status(describeStatus(pick?.name ?? null))
     if (logDecisions) {
@@ -666,6 +720,7 @@ export const register: Register = (on, options) => {
     try {
       const choice = task && listed.size > 0 ? await choose($, state, task, { restrictTo: listed, askGate: false }) : null
       if (choice?.answered) answer = choice.pick
+      if (choice) await record($, state, { source: 'find_skill', text: task, pick: answer && answer !== 'unavailable' ? answer.name : null, ...traceOf(choice) })
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] find_skill failed: ${String(error)}`)
     }
@@ -746,6 +801,7 @@ export const register: Register = (on, options) => {
             : 'nothing was suggested'
       $.ui.log(`[jev-skill-suggestion] skill /${e.skill} loaded (${how})`)
     }
+    if (e.skill !== SETUP_COMMAND) await record($, state, { loaded: e.skill, suggested })
     return next(e)
   })
 }

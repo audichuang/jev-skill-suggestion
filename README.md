@@ -167,6 +167,23 @@ jev · skill: pptx-author
 jev · no skill
 ```
 
+## Reading decisions back
+
+The transcript lines scroll away, and a headless run writes them only to its debug log. With `recordDecisions` on (the default), every decision also goes to one file per session, `~/.claude/jev-skill-suggestion/decisions/<session id>.jsonl` (under `CLAUDE_CONFIG_DIR` when set), one JSON object per line:
+
+```json
+{"at":"2026-10-16T08:12:03.120Z","source":"prompt","text":"畫一張 web 服務的架構圖","pick":"drawio-skill","reason":"rerank of 3, fits 0.91","answered":true,"ms":1180,"gate":0.71,"gateValues":{…},"top":[{"name":"drawio-skill","probability":0.62},…],"rerank":{"winner":"drawio-skill","confidence":0.88,"fits":{…}}}
+{"at":"2026-10-16T08:12:09.402Z","loaded":"drawio-skill","suggested":"drawio-skill"}
+```
+
+`source` is `prompt` or `find_skill`; a `loaded` line is the model calling the Skill tool, with the pick it was made under. The file holds the request text as typed: it never leaves the machine, and is there so a wrong suggestion can be read back and turned into a test case. Set `recordDecisions: false` to keep nothing.
+
+To list every recorded decision, newest session files included:
+
+```bash
+cat ~/.claude/jev-skill-suggestion/decisions/*.jsonl | jq -c 'select(.source) | {source, pick, reason, text: .text[0:60]}'
+```
+
 **No lines at all** has three causes, and only the last is the module failing to load. Check them in this order:
 
 1. **You ran `claude -p` (or the SDK).** A headless run has no transcript and no status row: every line still goes to the debug log, `~/.claude/debug/<session-id>.txt` (a `.txt`, not a `.log`; `latest` is a symlink to the newest), and an SDK host receives each one as `ui_log`.
@@ -204,6 +221,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
   rerankTimeoutMs:  number  latency budget for the rerank request (default 2500)
   findSkill:        boolean give the model the find_skill tool for mid-turn sub-tasks (default true; needs a key and rerank on)
   logDecisions:     boolean log each decision (default true)
+  recordDecisions:  boolean keep every decision in a file per session (default true)
 ```
 
 ## What changed from upstream
@@ -221,6 +239,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
 | Replies with no task of their own (`ok`, `2`, `繼續`) are not ranked. | [#1081](https://github.com/davila7/claude-code-templates/pull/1081) |
 | Skills set to `off` are never injected. | — |
 | A `find_skill` tool lets the model ask Jev mid-turn, so a sub-task that turns up after the prompt is not left to a guess from bare names. | — |
+| Every decision, with the request text and the ranking, is kept in a file per session (`recordDecisions`), so a wrong pick can be read back. | — |
 
 To see upstream's later changes: `gh api "repos/davila7/claude-code-templates/commits?path=cli-tool/components/mods/productivity/jev-skill-suggestion"`, then diff the new upstream copy against the `upstream-*` tag.
 

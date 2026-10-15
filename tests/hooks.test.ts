@@ -1,5 +1,5 @@
 import { expect, test } from 'claude-code/testing'
-import type { EngineInterface, Hook, Next, On, PromptSubmitInput, PromptAttachmentInput, SessionStartInput, ToolCallInput, ToolDescribeInput } from 'claude-code'
+import type { EngineInterface, Hook, Next, On, PromptSubmitInput, PromptAttachmentInput, SessionStartInput, SkillPromptInput, ToolCallInput, ToolDescribeInput } from 'claude-code'
 import { register } from '../hooks/jev-skill-suggestion.ts'
 
 /**
@@ -44,9 +44,13 @@ function seat(
       },
     },
     clock: { now: async () => 0, sleep: () => Promise.race([]) },
-    fs: { exists: async (path: string) => path in files, read: async (path: string) => files[path] as string },
+    fs: {
+      exists: async (path: string) => path in files,
+      read: async (path: string) => files[path] as string,
+      write: async (path: string, text: string) => void (files[path] = text),
+    },
     env: { get: async (name: string) => (world.env ?? {})[name] },
-    session: { cwd: async () => '/work' },
+    session: { cwd: async () => '/work', id: async () => 's1' },
     tool: {
       register: async (spec: { name: string }) => (registered.push(spec.name), { tool: `mcp__jev__${spec.name}` }),
     },
@@ -67,7 +71,9 @@ function seat(
       { type: 'skill_listing', text, origin: { kind: 'engine' }, agentId } as unknown as PromptAttachmentInput,
       pass,
     )
-  return { ask, auth, registered, start, describe, call, listing }
+  const load = (skill: string) =>
+    (hooks['skill.prompt'] as Hook<'skill.prompt'>)($, { skill, text: '' } as unknown as SkillPromptInput, pass)
+  return { ask, auth, registered, start, describe, call, listing, load, files }
 }
 
 test('with no key option the key comes from TYPESAFE_API_KEY, and a bare go-ahead is never ranked', async () => {
@@ -145,4 +151,27 @@ test('find_skill says the lookup is unavailable, not "none", when a request fail
   await unlisted.start()
   await unlisted.listing(LISTING, 'subagent-1')
   expect(text(await unlisted.call(FIND))).toContain('unavailable')
+})
+
+test('every decision and every load goes to the session record file, appended to what a resumed session left', async () => {
+  const path = '/home/u/.claude/jev-skill-suggestion/decisions/s1.jsonl'
+  const { ask, start, listing, call, load, files } = seat(
+    { typesafeApiKey: 'k' },
+    { env: { HOME: '/home/u' }, files: { [path]: '{"earlier":true}\n' } },
+  )
+  await ask('fix the failing tests')
+  await start()
+  await listing(LISTING)
+  await call(FIND)
+  await load('test-runner')
+  const lines = (files[path] as string).trim().split('\n').map((line) => JSON.parse(line))
+  expect(lines[0]).toEqual({ earlier: true })
+  expect(lines[1]).toMatchObject({ source: 'prompt', text: 'fix the failing tests', pick: 'test-runner', answered: true })
+  expect(lines[1].top[0].name).toBe('test-runner')
+  expect(lines[2]).toMatchObject({ source: 'find_skill', pick: 'test-runner' })
+  expect(lines[3]).toMatchObject({ loaded: 'test-runner', suggested: 'test-runner' })
+
+  const off = seat({ typesafeApiKey: 'k', recordDecisions: false }, { env: { HOME: '/home/u' } })
+  await off.ask('fix the failing tests')
+  expect(Object.keys(off.files)).toEqual([])
 })

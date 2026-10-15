@@ -763,6 +763,39 @@ export const FIND_SKILL_TOOL = {
  * a SKILL.md: the model loads the skill with the Skill tool, which re-attaches
  * it after a compaction.
  */
+/** One decision as the record file keeps it. */
+export interface Decision {
+  /** Where the text came from: the person's prompt, or the model's find_skill. */
+  source: 'prompt' | 'find_skill'
+  text: string
+  wide: Wide | null
+  rerank: Rerank | null
+  pick: string | null
+  reason: string
+  /** False when a request failed or timed out. */
+  answered: boolean
+  ms: number
+}
+
+/**
+ * One line of the session's record file (JSON Lines): a decision, with the
+ * ranking's top five, so a wrong pick can be read back and replayed later; or
+ * a skill the model loaded, with the pick it was made under.
+ */
+export function recordLine(at: number, entry: Decision | { loaded: string; suggested: string | null }): string {
+  const time = new Date(at).toISOString()
+  if ('loaded' in entry) return `${JSON.stringify({ at: time, ...entry })}\n`
+  const { wide, rerank, ...rest } = entry
+  return `${JSON.stringify({
+    at: time,
+    ...rest,
+    gate: wide?.gate ?? null,
+    gateValues: wide?.gateValues ?? {},
+    top: wide?.ranked.slice(0, 5) ?? [],
+    rerank: rerank && { winner: rerank.winner, confidence: rerank.confidence, fits: rerank.fits },
+  })}\n`
+}
+
 export function findSkillResult(pick: Skill | null | 'unavailable'): string {
   if (pick === 'unavailable') return 'The skill lookup is unavailable right now (it failed or timed out); the skill listing still names every skill.'
   if (!pick) return 'No installed skill fits this sub-task.'
