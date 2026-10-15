@@ -1,12 +1,19 @@
 import { expect, test } from 'claude-code/testing'
-import type { EngineInterface, Hook, Next, On, PromptSubmitInput, SessionStartInput, ToolCallInput, ToolDescribeInput } from 'claude-code'
+import type { EngineInterface, Hook, Next, On, PromptSubmitInput, PromptAttachmentInput, SessionStartInput, ToolCallInput, ToolDescribeInput } from 'claude-code'
 import { register } from '../hooks/jev-skill-suggestion.ts'
 
-/** The mod's prompt.submit hook, registered with `options`, and a `$` that answers from memory. */
-function seat(options: Record<string, unknown>, world: { env?: Record<string, string>; files?: Record<string, string>; fits?: number; gate?: number }) {
+/**
+ * The mod registered with `options`, driven through its hooks against a `$`
+ * that answers from memory; `down` makes every backend request fail.
+ */
+function seat(
+  options: Record<string, unknown>,
+  world: { env?: Record<string, string>; files?: Record<string, string>; fits?: number; gate?: number; down?: boolean },
+) {
   const hooks: Record<string, unknown> = {}
-  register(((event: string, hook: unknown) => {
-    hooks[event] = hook
+  // A matcher, when given, sits between the event and the hook.
+  register(((event: string, ...rest: unknown[]) => {
+    hooks[event] = rest[rest.length - 1]
   }) as On, { logDecisions: false, ...options })
   const submit = hooks['prompt.submit'] as Hook<'prompt.submit'>
 
@@ -18,6 +25,7 @@ function seat(options: Record<string, unknown>, world: { env?: Record<string, st
     http: {
       fetch: async (_url: string, init: { headers: Record<string, string>; body: string }) => {
         auth.push(init.headers.authorization as string)
+        if (world.down) return { ok: false, status: 503, text: '' }
         return {
           ok: true,
           text: JSON.stringify({ answers: {
@@ -50,9 +58,16 @@ function seat(options: Record<string, unknown>, world: { env?: Record<string, st
   const start = () => (hooks['session.start'] as Hook<'session.start'>)($, {} as SessionStartInput, pass)
   const describe = (tool: string) =>
     (hooks['tool.describe'] as Hook<'tool.describe'>)($, { tool, description: 'd' } as ToolDescribeInput, pass)
+  // The fakes stand in for engine events only in the fields the mod reads.
   const call = (e: Record<string, unknown>) =>
     (hooks['tool.call'] as Hook<'tool.call'>)($, { tool_use_id: 't', ...e } as unknown as ToolCallInput, pass)
-  return { ask, auth, registered, start, describe, call }
+  const listing = (text: string, agentId?: string) =>
+    (hooks['prompt.attachment'] as Hook<'prompt.attachment'>)(
+      $,
+      { type: 'skill_listing', text, origin: { kind: 'engine' }, agentId } as unknown as PromptAttachmentInput,
+      pass,
+    )
+  return { ask, auth, registered, start, describe, call, listing }
 }
 
 test('with no key option the key comes from TYPESAFE_API_KEY, and a bare go-ahead is never ranked', async () => {
@@ -81,31 +96,53 @@ test('a skill turned off in the user settings is never offered, under CLAUDE_CON
   expect(auth).toEqual([])
 })
 
+const LISTING = 'Skills:\n- test-runner'
+const FIND = { tool: 'mcp__jev__find_skill', task: 'fix the failing tests' }
+const text = (answer: unknown) => (typeof answer === 'object' && answer && 'result' in answer ? String(answer.result) : '')
+
 test('find_skill is registered at session start, kept out of ToolSearch, and answers with the pick for the Skill tool', async () => {
-  const { start, describe, call, auth } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
+  const { start, describe, call, listing, auth } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
   await start()
   const described = await describe('mcp__jev__find_skill')
   expect('isDeferred' in described && described.isDeferred).toBe(false)
   expect('isDeferred' in (await describe('Bash'))).toBe(false)
 
-  const answer = await call({ tool: 'mcp__jev__find_skill', task: 'fix the failing tests' })
+  await listing(LISTING)
+  expect(text(await call(FIND))).toContain('skill: "test-runner"')
   expect(auth.length).toBe(2)
-  expect('result' in answer && String(answer.result)).toContain('skill: "test-runner"')
   const bash = { tool: 'Bash', command: 'ls' }
   expect(await call(bash)).toEqual({ tool_use_id: 't', ...bash })
 })
 
-test('find_skill is not registered with findSkill off', async () => {
-  const { start, registered } = seat({ findSkill: false }, {})
-  await start()
-  expect(registered).toEqual([])
+test('find_skill is not offered with findSkill off, or with no backend to rerank its pick', async () => {
+  const off = seat({ findSkill: false, typesafeApiKey: 'k' }, {})
+  await off.start()
+  expect(off.registered).toEqual([])
+  const keyless = seat({}, {})
+  await keyless.start()
+  expect(keyless.registered).toEqual([])
+  const noRerank = seat({ typesafeApiKey: 'k', rerank: false }, {})
+  await noRerank.start()
+  expect(noRerank.registered).toEqual([])
 })
 
 test('find_skill skips the gate a prompt must pass: the model calling it already wants a skill', async () => {
-  const { ask, start, call } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, gate: 0.1 })
+  const { ask, start, call, listing } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, gate: 0.1 })
   const prompted = await ask('fix the failing tests')
   expect('context' in prompted ? prompted.context : undefined).toBeUndefined()
   await start()
-  const answer = await call({ tool: 'mcp__jev__find_skill', task: 'fix the failing tests' })
-  expect('result' in answer && String(answer.result)).toContain('skill: "test-runner"')
+  await listing(LISTING)
+  expect(text(await call(FIND))).toContain('skill: "test-runner"')
+})
+
+test('find_skill says the lookup is unavailable, not "none", when a request fails or no listing was seen', async () => {
+  const down = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, down: true })
+  await down.start()
+  await down.listing(LISTING)
+  expect(text(await down.call(FIND))).toContain('unavailable')
+
+  const unlisted = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
+  await unlisted.start()
+  await unlisted.listing(LISTING, 'subagent-1')
+  expect(text(await unlisted.call(FIND))).toContain('unavailable')
 })

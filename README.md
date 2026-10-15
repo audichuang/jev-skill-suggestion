@@ -86,7 +86,7 @@ Send a prompt in any project. The transcript should show:
 
 **When it decides.** Once per prompt you send, from that prompt's text alone. A long turn can run into sub-tasks the prompt never named, and with `name-only` the model sees those skills by name only. For that, the mod gives the model a `find_skill` tool. The model calls it with the sub-task in one sentence, and Jev answers with at most one skill: its name and the description the listing leaves out. The model then loads it with the Skill tool, or ignores it. Nothing is pushed mid-turn. A skill that hands off to another skill works as it does without the mod.
 
-`find_skill` offers only skills the listing names, because the Skill tool loads only those. It skips the gate that a prompt must pass: a model that calls `find_skill` has already decided it wants a skill, and one sub-task sentence without its conversation scores low on the gate questions. The rerank's `fits` check still applies. It answers a name and never a SKILL.md: a skill loaded with the Skill tool is attached again after a compaction, and one attached by the mod is not. `findSkill: false` turns the tool off. The tool's description and schema cost about 160 tokens in every session.
+`find_skill` offers only skills the main conversation's listing names, because the Skill tool loads only those. It leaves out the gate questions a prompt must pass: a model that calls `find_skill` has already decided it wants a skill, and one sub-task sentence without its conversation scores low on them. The rerank's `fits` check is then the only check, so a pick the rerank never read is not answered, and the tool is offered only with a TypeSafe or Gateway key and `rerank` on. When a request fails or times out, it says the lookup is unavailable rather than "no skill fits". It answers a name and never a SKILL.md: a skill loaded with the Skill tool is attached again after a compaction, and one attached by the mod is not. `findSkill: false` turns the tool off. The tool's description and schema cost about 160 tokens in every session.
 
 **What it attaches:**
 
@@ -157,7 +157,7 @@ With `logDecisions` on (the default), the mod reports every step of its own work
 - The two `jev:` lines are what the decision model replied to each request, before any policy is applied — the gate, the top of the ranking, then the rerank's winner and every `fits`, with how long each call took and how many SKILL.md bodies were found.
 - `injected /name from <file>` is the skill going in with the prompt; `already injected this session; named again` on a repeat.
 - `withheld the skill listing` appears only with `hideListing: true`: the listing hook firing, with what it cost the context and what it kept. While some listed skills still bring their whole description, the mod adds `N skills are still listed with a full description; run /jev-skill-suggestion:setup …` once per session.
-- `find_skill "<sub-task>": suggesting /name` (or `no suggestion`) is the model calling `find_skill` mid-turn, after the same `jev:` lines.
+- `find_skill "<sub-task>": suggesting /name` (or `no suggestion`, or `lookup unavailable`) is the model calling `find_skill` mid-turn, after the same `jev:` lines.
 - `skill /name loaded` is the model calling the Skill tool on its own (`inject: "suggest"`, or a typed `/name`): `as suggested`, or which skill was suggested instead when it reached for another.
 
 It also keeps a one-line status on screen, replaced as it goes:
@@ -202,7 +202,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
   neverSuggested:   string  comma-separated names never offered to the decision model
   timeoutMs:        number  latency budget for the ranking request (default 800)
   rerankTimeoutMs:  number  latency budget for the rerank request (default 2500)
-  findSkill:        boolean give the model the find_skill tool for mid-turn sub-tasks (default true)
+  findSkill:        boolean give the model the find_skill tool for mid-turn sub-tasks (default true; needs a key and rerank on)
   logDecisions:     boolean log each decision (default true)
 ```
 

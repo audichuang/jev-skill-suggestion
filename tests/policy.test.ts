@@ -498,9 +498,10 @@ test('findSkillResult names the pick with its description for the Skill tool, an
   expect(text).toContain('- pdf: Read and edit PDF files')
   expect(text).toContain('skill: "pdf"')
   expect(findSkillResult(null)).toBe('No installed skill fits this sub-task.')
+  expect(findSkillResult('unavailable')).toContain('unavailable')
 })
 
 test('the ranking can leave the gate out, and then the gate passes', () => {
-  const questions = wideQuestions('typesafe', [{ name: 'a', description: 'A' }], false)
+  const questions = wideQuestions('typesafe', [{ name: 'a', description: 'A' }], { askGate: false })
   expect(Object.keys(questions)).toEqual(['which'])
 })

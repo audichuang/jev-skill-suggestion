@@ -424,7 +424,11 @@ function yesNo(provider: Provider, instructions: string): Record<string, unknown
 }
 
 /** The first request's `questions`: the ranking, and the gate unless `askGate` is off. */
-export function wideQuestions(provider: Provider, skills: readonly Skill[], askGate = true): Record<string, unknown> {
+export function wideQuestions(
+  provider: Provider,
+  skills: readonly Skill[],
+  { askGate = true }: { askGate?: boolean } = {},
+): Record<string, unknown> {
   const criteria: Record<string, string> = {}
   for (const skill of skills) criteria[skill.name] = skill.description || `A skill named ${skill.name}.`
   const questions: Record<string, unknown> = {
@@ -751,14 +755,16 @@ export const FIND_SKILL_TOOL = {
     properties: { task: { type: 'string', description: 'The sub-task, in one sentence.' } },
     required: ['task'],
   },
-}
+} as const
 
 /**
  * What `find_skill` answers: the pick with the description the listing left
- * out, or a plain "none". Never a SKILL.md: the model loads the skill with the
- * Skill tool, which re-attaches it after a compaction.
+ * out, a plain "none", or that the lookup failed, which is not a "none". Never
+ * a SKILL.md: the model loads the skill with the Skill tool, which re-attaches
+ * it after a compaction.
  */
-export function findSkillResult(pick: Skill | null): string {
+export function findSkillResult(pick: Skill | null | 'unavailable'): string {
+  if (pick === 'unavailable') return 'The skill lookup is unavailable right now (it failed or timed out); the skill listing still names every skill.'
   if (!pick) return 'No installed skill fits this sub-task.'
   return [
     line(pick),

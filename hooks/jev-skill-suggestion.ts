@@ -34,7 +34,7 @@
  *                        mid-turn, for a model that sees most skills by name
  *                        only. It answers a name for the Skill tool, never a
  *                        SKILL.md.
- *   skill.prompt       — observation:whether the model took the suggestion,
+ *   skill.prompt       — observation: whether the model took the suggestion,
  *                        or loaded a skill on its own. Also writes the prompt
  *                        of the plugin's own `/jev-skill-suggestion:setup`,
  *                        which hides every skill from the engine's listing
@@ -148,8 +148,18 @@ type SkillFile = { path: string; markdown: string }
 /** The backend the keys select, with where and as which model it is asked. */
 type Backend = { active: Provider | null; apiKey: string; modelId: string; url: string }
 
+/** What `choose` answers. */
+interface Choice {
+  pick: Skill | null
+  /** Why, for the log line. */
+  reason: string
+  file: SkillFile | null
+  /** False when a request failed or timed out: "no pick" is then not an answer. */
+  answered: boolean
+}
+
 /** What `choose` reads from the options, and the session state it shares with the hooks. */
-interface Chooser {
+interface ChooseContext {
   readonly backendOf: (typesafeEnv: string | undefined, gatewayEnv: string | undefined) => Backend
   readonly forced: string
   readonly neverSuggested: ReadonlySet<string>
@@ -160,7 +170,7 @@ interface Chooser {
   readonly excerptChars: number
   readonly policy: PolicyConfig
   // Session state, filled in as hooks run.
-  readonly files: Map<string, SkillFile | null>
+  files: Map<string, SkillFile | null>
   unusableReported: boolean
   displayToId: Map<string, string> | null
 }
@@ -175,9 +185,9 @@ async function configDirFor($: EngineInterface): Promise<string> {
  * Every command `$.command.list()` reports, under the id the engine lists,
  * runs and overrides it by. Throws as `$.command.list()` does.
  */
-async function listCommands($: EngineInterface, s: Chooser, configDir: string) {
+async function listCommands($: EngineInterface, ctx: ChooseContext, configDir: string) {
   const commands = await $.command.list()
-  if (!s.displayToId && commands.some((command) => !commandLike(command.name))) {
+  if (!ctx.displayToId && commands.some((command) => !commandLike(command.name))) {
     const found: { dir: string; markdown: string }[] = []
     for (const dir of [`${await $.session.cwd()}/.claude/skills`, configDir && `${configDir}/skills`]) {
       if (!dir || !(await $.fs.exists(dir))) continue
@@ -186,14 +196,14 @@ async function listCommands($: EngineInterface, s: Chooser, configDir: string) {
         if (entry.kind === 'dir' && (await $.fs.exists(file))) found.push({ dir: entry.name, markdown: await $.fs.read(file) })
       }
     }
-    s.displayToId = displayIds(found)
+    ctx.displayToId = displayIds(found)
   }
-  return canonical(commands, s.displayToId ?? new Map())
+  return canonical(commands, ctx.displayToId ?? new Map())
 }
 
 /**
  * Jev's pick for `text`, with the pick's SKILL.md when found, or null when
- * the skills could not be listed or none is a candidate. `restrictTo`, when
+ * the skills could not be listed. `restrictTo`, when
  * non-empty, keeps the candidates to those names: the listing's, for a pick
  * the model will load with the Skill tool (empty until the listing is seen).
  * `askGate` off leaves the gate questions out, so the gate passes: a model
@@ -201,12 +211,12 @@ async function listCommands($: EngineInterface, s: Chooser, configDir: string) {
  */
 async function choose(
   $: EngineInterface,
-  s: Chooser,
+  ctx: ChooseContext,
   text: string,
   { restrictTo, askGate }: { restrictTo: ReadonlySet<string>; askGate: boolean },
-): Promise<{ pick: Skill | null; reason: string; file: SkillFile | null } | null> {
+): Promise<Choice | null> {
   const configDir = await configDirFor($)
-  const { active, apiKey, modelId, url } = s.backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
+  const { active, apiKey, modelId, url } = ctx.backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
 
   /** One request to the active backend, or null on timeout, error or a non-2xx. */
   const ask = async (
@@ -239,7 +249,7 @@ async function choose(
     skill: Skill,
     plugin: string | undefined,
   ): Promise<SkillFile | null> => {
-    const cached = s.files.get(skill.name)
+    const cached = ctx.files.get(skill.name)
     if (cached !== undefined) return cached
     let found: SkillFile | null = null
     try {
@@ -273,21 +283,18 @@ async function choose(
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] could not read /${skill.name}: ${String(error)}`)
     }
-    s.files.set(skill.name, found)
+    ctx.files.set(skill.name, found)
     return found
   }
-  /** The opening of a skill's body, or null when its file is nowhere. */
-  const bodyOf = async (skill: Skill, plugin: string | undefined): Promise<string | null> =>
-    (await fileOf(skill, plugin))?.markdown ?? null
 
-  if (!s.unusableReported && !active) {
-    s.unusableReported = true
-    $.ui.log(`[jev-skill-suggestion] provider "${s.forced}" has no key set; using the built-in classifier`)
+  if (!ctx.unusableReported && !active) {
+    ctx.unusableReported = true
+    $.ui.log(`[jev-skill-suggestion] provider "${ctx.forced}" has no key set; using the built-in classifier`)
   }
 
   let commands: Awaited<ReturnType<typeof $.command.list>>
   try {
-    commands = await listCommands($, s, configDir)
+    commands = await listCommands($, ctx, configDir)
   } catch (error) {
     $.ui.log(`[jev-skill-suggestion] could not list the skills: ${String(error)}`)
     return null
@@ -305,18 +312,15 @@ async function choose(
   } catch (error) {
     $.ui.log(`[jev-skill-suggestion] could not read the skill overrides: ${String(error)}`)
   }
-  const skills = catalog(commands, restrictTo, new Set([...s.neverSuggested, ...off]))
-  if (skills.length === 0) {
-    if (s.logDecisions) $.ui.log('[jev-skill-suggestion] no candidate skills; nothing to suggest')
-    return null
-  }
+  const skills = catalog(commands, restrictTo, new Set([...ctx.neverSuggested, ...off]))
+  if (skills.length === 0) return { pick: null, reason: 'no candidate skills', file: null, answered: true }
   const pluginOf = new Map(commands.map((command) => [command.name, command.plugin]))
 
   // Request 1: rank everything, and ask whether the prompt wants a skill at all.
   const startedAt = await $.clock.now()
   let wide: Wide | null = null
   if (active) {
-    const answer = await ask(text, wideQuestions(active, skills, askGate), 'ranking', s.timeoutMs)
+    const answer = await ask(text, wideQuestions(active, skills, { askGate }), 'ranking', ctx.timeoutMs)
     if (answer) wide = readWide(answer)
   } else {
     // No backend: the engine's own small-model classifier answers the same
@@ -334,7 +338,7 @@ async function choose(
   }
   // What the decision model actually answered, whatever the policy then
   // does with it. This is the line that proves the ranking ran.
-  if (s.logDecisions) {
+  if (ctx.logDecisions) {
     const ms = (await $.clock.now()) - startedAt
     $.ui.log(`[jev-skill-suggestion] jev: ${describeWide(wide, skills.length, ms)}`)
   }
@@ -346,24 +350,24 @@ async function choose(
   // Before the listing has been seen, `$.command.list()` may name a skill
   // the model is not allowed to invoke; its own frontmatter tells.
   const barred: string[] = []
-  if (active && s.rerankEnabled && wide && passesGate(wide, s.policy)) {
+  if (active && ctx.rerankEnabled && wide && passesGate(wide, ctx.policy)) {
     const candidates: Candidate[] = []
-    for (const skill of shortlistOf(wide, skills, s.policy.shortlist)) {
-      const body = await bodyOf(skill, pluginOf.get(skill.name))
+    for (const skill of shortlistOf(wide, skills, ctx.policy.shortlist)) {
+      const body = (await fileOf(skill, pluginOf.get(skill.name)))?.markdown ?? null
       if (!modelInvocable(body)) {
         barred.push(skill.name)
         continue
       }
-      candidates.push({ ...skill, detail: detailOf(skill, body, s.excerptChars) })
+      candidates.push({ ...skill, detail: detailOf(skill, body, ctx.excerptChars) })
     }
     if (candidates.length > 0) {
       const rerankStartedAt = await $.clock.now()
       rerankAttempted = true
-      const answer = await ask(text, rerankQuestions(active, candidates), 'rerank', s.rerankTimeoutMs)
+      const answer = await ask(text, rerankQuestions(active, candidates), 'rerank', ctx.rerankTimeoutMs)
       if (answer) rerank = readRerank(answer)
-      if (s.logDecisions) {
+      if (ctx.logDecisions) {
         const ms = (await $.clock.now()) - rerankStartedAt
-        const read = candidates.filter((candidate) => s.files.get(candidate.name)).length
+        const read = candidates.filter((candidate) => ctx.files.get(candidate.name)).length
         $.ui.log(
           `[jev-skill-suggestion] jev: ${describeRerank(rerank, ms)} · ${read}/${candidates.length} bodies read`,
         )
@@ -372,21 +376,28 @@ async function choose(
   }
 
   const offered = barred.length > 0 ? skills.filter((skill) => !barred.includes(skill.name)) : skills
-  let decision = decide(wide, rerank, offered, s.policy, rerankAttempted)
+  let decision = decide(wide, rerank, offered, ctx.policy, rerankAttempted)
   let pick = decision.name ? (skills.find((skill) => skill.name === decision.name) ?? null) : null
+  // With the gate left out, the rerank's `fits` is the only check against a
+  // wrong pick: a pick it never read (every shortlisted skill barred, so the
+  // ranking's next one stands) is no answer.
+  if (pick && !askGate && !rerank) {
+    decision = { name: null, reason: 'no rerank read the pick' }
+    pick = null
+  }
   // The winner's own frontmatter has the last word, whichever path picked it.
-  if (pick && !barred.includes(pick.name) && !modelInvocable(await bodyOf(pick, pluginOf.get(pick.name)))) {
+  if (pick && !barred.includes(pick.name) && !modelInvocable((await fileOf(pick, pluginOf.get(pick.name)))?.markdown ?? null)) {
     barred.push(pick.name)
     decision = { name: null, reason: `/${pick.name} has disable-model-invocation` }
     pick = null
   }
-  if (s.logDecisions && barred.length > 0) {
+  if (ctx.logDecisions && barred.length > 0) {
     $.ui.log(
       `[jev-skill-suggestion] not model-invocable, left out: ${barred.map((name) => `/${name}`).join(', ')}`,
     )
   }
   const file = pick ? await fileOf(pick, pluginOf.get(pick.name)) : null
-  return { pick, reason: decision.reason, file }
+  return { pick, reason: decision.reason, file, answered: wide !== null && (!rerankAttempted || rerank !== null) }
 }
 
 export const register: Register = (on, options) => {
@@ -477,7 +488,7 @@ export const register: Register = (on, options) => {
   // The setup hint, once per session.
   let hintedSetup = false
 
-  const state: Chooser = {
+  const state: ChooseContext = {
     backendOf,
     forced,
     files,
@@ -509,7 +520,8 @@ export const register: Register = (on, options) => {
     }
 
     const skills = parseListing(e.text)
-    for (const skill of skills) listed.add(skill.name)
+    // A subagent's listing may name skills the main conversation's does not.
+    if (!e.agentId) for (const skill of skills) listed.add(skill.name)
 
     // A listed skill that still brings its whole description is context the
     // setup command would trim to the name: say so once.
@@ -623,7 +635,13 @@ export const register: Register = (on, options) => {
   // full name is the engine's (it depends on how the plugin was loaded).
   let findSkillName = ''
   on('session.start', async ($, e, next) => {
-    if (findSkill) {
+    // Without a backend that reranks, nothing would check the ranking's pick,
+    // and the gate is left out: the tool is not offered.
+    const vetted = backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY')).active && rerankEnabled
+    if (findSkill && !vetted && logDecisions) {
+      $.ui.log('[jev-skill-suggestion] find_skill not offered: it needs a TypeSafe or Gateway key and rerank on')
+    }
+    if (findSkill && vetted) {
       try {
         findSkillName = (await $.tool.register(FIND_SKILL_TOOL)).tool
       } catch (error) {
@@ -642,23 +660,24 @@ export const register: Register = (on, options) => {
   on('tool.call', async ($, e, next) => {
     if (!findSkillName || e.tool !== findSkillName) return next(e)
     const task = 'task' in e && typeof e.task === 'string' ? e.task.trim() : ''
-    let pick: Skill | null = null
+    // The model loads the answer with the Skill tool, so only what the
+    // engine lists is offered; before the listing is seen, nothing is.
+    let answer: Skill | null | 'unavailable' = 'unavailable'
     try {
-      // The model loads the answer with the Skill tool, so only what the
-      // engine lists is offered.
-      if (task) pick = (await choose($, state, task, { restrictTo: listed, askGate: false }))?.pick ?? null
+      const choice = task && listed.size > 0 ? await choose($, state, task, { restrictTo: listed, askGate: false }) : null
+      if (choice?.answered) answer = choice.pick
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] find_skill failed: ${String(error)}`)
     }
     if (logDecisions) {
-      $.ui.log(
-        `[jev-skill-suggestion] find_skill${e.agentId ? ` (${e.agentId})` : ''} "${task}": ${pick ? `suggesting /${pick.name}` : 'no suggestion'}`,
-      )
+      const outcome = answer === 'unavailable' ? 'lookup unavailable' : answer ? `suggesting /${answer.name}` : 'no suggestion'
+      $.ui.log(`[jev-skill-suggestion] find_skill${e.agentId ? ` (${e.agentId})` : ''} "${task}": ${outcome}`)
     }
     // The latest pick, prompt's or find_skill's, is what a skill.prompt that
-    // follows is measured against.
-    if (pick) suggested = pick.name
-    return { result: findSkillResult(pick) }
+    // follows is measured against: without it, a skill loaded on
+    // find_skill's word would be logged as one nothing suggested.
+    if (answer && answer !== 'unavailable') suggested = answer.name
+    return { result: findSkillResult(answer) }
   })
 
   on('skill.prompt', { skill: 'jev-skill-suggestion:setup' }, async ($, e, next) => {

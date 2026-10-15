@@ -2,7 +2,7 @@
 
 調查日期：2026-10-15。Claude Code 版本：2.1.299。所有結論都附來源；凡是「推論」都會標出來。文中的 `claude-code.d.ts:NNNN` 都是指 `~/.claude/plugins/marketplaces/claude-code-plugins/mods/types/claude-code.d.ts`（隨 2.1.299 安裝的版本）。
 
-背景：本 mod 在 `prompt.submit` 時請 TypeSafe Jev（約 0.2–2.5s）從 88 個設成 `name-only` 的 skill 中挑 ≤1 個，再把該 SKILL.md 以 `context` 附在 prompt 後面（`hooks/jev-skill-suggestion.ts:499-525`）。要回答的問題是：一個長 turn 進行到一半，模型需要別的 skill 卻只看得到名稱時，mod 該不該在 turn 中途再決定一次。
+背景：本 mod 在 `prompt.submit` 時請 TypeSafe Jev（約 0.2–2.5s）從 88 個設成 `name-only` 的 skill 中挑 ≤1 個，再把該 SKILL.md 以 `context` 附在 prompt 後面（`hooks/jev-skill-suggestion.ts` 的 `prompt.submit` hook）。要回答的問題是：一個長 turn 進行到一半，模型需要別的 skill 卻只看得到名稱時，mod 該不該在 turn 中途再決定一次。
 
 ---
 
@@ -35,7 +35,7 @@
 - `skillOverrides` 的 `"name-only"` 是「Listed to Claude: Name only」。[同上](https://code.claude.com/docs/en/skills)
 - **預算**：「The listing always contains every skill name, but if you have many skills, Claude Code drops some descriptions to fit the listing's character budget, which removes the keywords Claude needs to match your request. The budget scales at 1% of the model's context window.」超出時從最少用的 skill 開始砍描述。可調 `skillListingBudgetFraction` 或 `SLASH_COMMAND_TOOL_CHAR_BUDGET`；文件也建議把低優先的 skill 設成 `"name-only"`。[同上，Skill descriptions are cut short](https://code.claude.com/docs/en/skills)。官方在這裡明說：沒有描述等於沒有比對用的關鍵字。
 - **skill 內容的生命週期**：「the rendered `SKILL.md` content enters the conversation as a single message and stays there across later turns」。compaction 後，Claude Code 會把每個用過的 skill 最近一次的呼叫重新附上，每個保留前 5,000 tokens，全部合計上限 25,000 tokens。[同上](https://code.claude.com/docs/en/skills)
-  - **對本 mod 的影響**：mod 是在 `prompt.submit` 用 `context` 附上 SKILL.md（`hooks/jev-skill-suggestion.ts:525`），不是透過 Skill tool 呼叫，所以**拿不到**上面那個 compaction 重新附上的保障。程式註解自己也寫了「a compaction may summarize the block away」（`:528-530`）。`session.compact` 會清掉 `injected`（`:536-539`），所以下一次 `prompt.submit` 挑中時會重新整份注入。真正的缺口在於：如果 turn 進行到一半發生 auto-compaction，這個 turn 剩下的部分就沒有那份 SKILL.md 可看，要等到下一個 prompt 才會補回來。
+  - **對本 mod 的影響**：mod 是在 `prompt.submit` 用 `context` 附上 SKILL.md（`prompt.submit` hook 結尾的 `next({ ...e, context })`），不是透過 Skill tool 呼叫，所以**拿不到**上面那個 compaction 重新附上的保障。程式註解自己也寫了「a compaction may summarize the block away」（`session.end` 上方的註解）。`session.compact` 會清掉 `injected`（`session.compact` hook），所以下一次 `prompt.submit` 挑中時會重新整份注入。真正的缺口在於：如果 turn 進行到一半發生 auto-compaction，這個 turn 剩下的部分就沒有那份 SKILL.md 可看，要等到下一個 prompt 才會補回來。
 - **Claude Code 本身就會在 turn 中途 push skill**（以事件為界）：
   - `paths` frontmatter：「When set, Claude loads the skill automatically only when working with files matching the patterns.」[skills 文件](https://code.claude.com/docs/en/skills)。2.1.299 binary 裡有對應字串 `Activated conditional skill ' ' (matched path:`。
   - 子目錄裡的 `.claude/skills`：「They load the first time Claude reads or edits a file in that subdirectory」。[同上](https://code.claude.com/docs/en/skills)
