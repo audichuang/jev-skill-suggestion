@@ -33,6 +33,10 @@ One change at a time, each kept only if it did not score worse.
 | Shipped, catalog reversed | 26 | 1 | 4 | 2 |
 | 34th case added (a live Excel prompt 0.6 dropped at `fits` 0.53); `fitsThreshold` 0.5 (shipped in 0.5.1) | **27** of 34 | 2 | 4 | 1 |
 | Same 34, `fitsThreshold` 0.6 | 26 | 1 | 4 | 3 |
+| 0.6.0: the 13 session cases given the turn before them, as `recent_context` now sends | 26 of 34 | 2 | 5 | 1 |
+| Same, `names_its_task` asking about `request` and `recent_context` together | 26 | 2 | 5 | 1 |
+| A project's 6 real turns (kept outside the repo), without `recent_context` | 3 of 6 | 2 | 0 | 1 |
+| Same 6, with it | 4 of 6 | 1 | 0 | 1 |
 
 - The `` `request` `` rewording, though the docs suggest naming fields, scored worse and was dropped.
 - `names_its_task` is what separated short follow-ups ("好幫我完成優化吧", 0.02–0.13) from tasks; the gate means of the two groups had overlapped almost entirely before it.
@@ -40,3 +44,4 @@ One change at a time, each kept only if it did not score worse.
 - 1.13 and 1.14 differ by one case here, which this set cannot tell from noise. 1.14 is pinned by preference; `jev-latest` still pointed at 1.13 and an alias moves under tuned thresholds.
 - Option order made no difference in totals.
 - Left: follow-ups about skills themselves ("幫我看看這個技能…") still draw skillgenie or skill-creator, and two tasks are now missed (`pr`, whose `fits` came back 0.49).
+- The turn before helps a follow-up whose task is in that turn ("查無資料ㄟ 為什麼？？" after a pasted SQL), and costs one false positive here among follow-ups that wanted nothing. Kept on: the project turns are where a skill was missing; `sendRecentContext: false` turns it off.
