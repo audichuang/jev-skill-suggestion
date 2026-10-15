@@ -6,6 +6,8 @@ Claude Code mod（hooks module plugin），fork 自 davila7/claude-code-template
 
 - `claude plugin test .` 與 `claude plugin validate .`。不要用 `bun test`：`claude-code/testing` 只有 `claude plugin test` 提供。
 - 改到 hook 行為時做實機驗證：push 後跑 `claude plugin marketplace update jev-skill-suggestion && claude plugin update jev-skill-suggestion@jev-skill-suggestion`，再用 `claude --debug -p '<需要某個 skill 的任務>'` 開一個 session，到 `~/.claude/debug/` 最新的檔案裡找 `ready on typesafe` 和 `suggesting /…`。headless 模式下 log 只寫進 debug 檔。
+- 已安裝同名 plugin 時，`--plugin-dir` 會被安裝版蓋掉（debug log 寫 `@jev-skill-suggestion`，不是 `@inline`）。先 `claude plugin disable jev-skill-suggestion@jev-skill-suggestion`，跑完再 `enable`。macOS 沒有 `timeout` 指令，別拿它包 `claude -p`。
+- 每次判斷會寫進 `~/.claude/jev-skill-suggestion/decisions/<session id>.jsonl`，比對行為時讀這個檔比翻 debug log 準。
 
 ## 不可退回的設計
 

@@ -522,6 +522,16 @@ function yesNoOf(answer: Record<string, unknown> | undefined): number | null {
  * choice alone, at the reported confidence or none. The gate is the mean of
  * the oriented nouls that were answered, or null when none was.
  */
+/** The model version a response says answered it (`jev-latest` resolves to one), or null. */
+export function modelOf(responseText: string): string | null {
+  try {
+    const model = (JSON.parse(responseText) as { model?: unknown }).model
+    return typeof model === 'string' ? model : null
+  } catch {
+    return null
+  }
+}
+
 export function readWide(responseText: string): Wide | null {
   const answers = answersOf(responseText)
   const which = answers?.which
@@ -775,6 +785,10 @@ export interface Decision {
   /** False when a request failed or timed out. */
   answered: boolean
   ms: number
+  /** The model version that answered, so a shift in scores can be told from an alias moving. */
+  model: string | null
+  /** The subagent that called find_skill, when one did. */
+  agentId?: string
 }
 
 /**

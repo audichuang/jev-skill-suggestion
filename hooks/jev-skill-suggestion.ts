@@ -114,6 +114,7 @@ import {
   readSkillSettings,
   modelInvocable,
   readWide,
+  modelOf,
   recordLine,
   rerankQuestions,
   requestBody,
@@ -161,6 +162,7 @@ interface Choice {
   wide: Wide | null
   rerank: Rerank | null
   ms: number
+  model: string | null
 }
 
 /** What `choose` reads from the options, and the session state it shares with the hooks. */
@@ -184,8 +186,8 @@ interface ChooseContext {
 }
 
 /** A Choice's fields the record file keeps, beside the source, text and pick. */
-function traceOf({ reason, answered, wide, rerank, ms }: Choice) {
-  return { reason, answered, wide, rerank, ms }
+function traceOf({ reason, answered, wide, rerank, ms, model }: Choice) {
+  return { reason, answered, wide, rerank, ms, model }
 }
 
 /** A record file stops growing here, under `$.fs`'s 4 MiB per read and write. */
@@ -354,16 +356,20 @@ async function choose(
   }
   const skills = catalog(commands, restrictTo, new Set([...ctx.neverSuggested, ...off]))
   if (skills.length === 0) {
-    return { pick: null, reason: 'no candidate skills', file: null, answered: true, wide: null, rerank: null, ms: 0 }
+    return { pick: null, reason: 'no candidate skills', file: null, answered: true, wide: null, rerank: null, ms: 0, model: null }
   }
   const pluginOf = new Map(commands.map((command) => [command.name, command.plugin]))
 
   // Request 1: rank everything, and ask whether the prompt wants a skill at all.
   const startedAt = await $.clock.now()
   let wide: Wide | null = null
+  let model: string | null = null
   if (active) {
     const answer = await ask(text, wideQuestions(active, skills, { askGate }), 'ranking', ctx.timeoutMs)
-    if (answer) wide = readWide(answer)
+    if (answer) {
+      wide = readWide(answer)
+      model = modelOf(answer)
+    }
   } else {
     // No backend: the engine's own small-model classifier answers the same
     // question, with the descriptions folded into the text it reads. One
@@ -447,6 +453,7 @@ async function choose(
     wide,
     rerank,
     ms: (await $.clock.now()) - startedAt,
+    model,
   }
 }
 
@@ -720,7 +727,7 @@ export const register: Register = (on, options) => {
     try {
       const choice = task && listed.size > 0 ? await choose($, state, task, { restrictTo: listed, askGate: false }) : null
       if (choice?.answered) answer = choice.pick
-      if (choice) await record($, state, { source: 'find_skill', text: task, pick: answer && answer !== 'unavailable' ? answer.name : null, ...traceOf(choice) })
+      if (choice) await record($, state, { source: 'find_skill', text: task, pick: answer && answer !== 'unavailable' ? answer.name : null, ...traceOf(choice), ...(e.agentId ? { agentId: e.agentId } : {}) })
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] find_skill failed: ${String(error)}`)
     }

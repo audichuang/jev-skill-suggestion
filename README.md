@@ -172,7 +172,7 @@ jev · no skill
 The transcript lines scroll away, and a headless run writes them only to its debug log. With `recordDecisions` on (the default), every decision also goes to one file per session, `~/.claude/jev-skill-suggestion/decisions/<session id>.jsonl` (under `CLAUDE_CONFIG_DIR` when set), one JSON object per line:
 
 ```json
-{"at":"2026-10-16T08:12:03.120Z","source":"prompt","text":"畫一張 web 服務的架構圖","pick":"drawio-skill","reason":"rerank of 3, fits 0.91","answered":true,"ms":1180,"gate":0.71,"gateValues":{…},"top":[{"name":"drawio-skill","probability":0.62},…],"rerank":{"winner":"drawio-skill","confidence":0.88,"fits":{…}}}
+{"at":"2026-10-16T08:12:03.120Z","source":"prompt","text":"畫一張 web 服務的架構圖","pick":"drawio-skill","reason":"rerank of 3, fits 0.91","answered":true,"ms":1180,"model":"jev-1.13.0","gate":0.71,"gateValues":{…},"top":[{"name":"drawio-skill","probability":0.62},…],"rerank":{"winner":"drawio-skill","confidence":0.88,"fits":{…}}}
 {"at":"2026-10-16T08:12:09.402Z","loaded":"drawio-skill","suggested":"drawio-skill"}
 ```
 

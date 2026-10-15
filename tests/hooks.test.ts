@@ -28,7 +28,7 @@ function seat(
         if (world.down) return { ok: false, status: 503, text: '' }
         return {
           ok: true,
-          text: JSON.stringify({ answers: {
+          text: JSON.stringify({ model: 'jev-1.13.0', answers: {
             which: { type: 'choice', choice: 'test-runner' },
             'fits::test-runner': { type: 'noul', noul: world.fits ?? 0.9 },
             // Gate answers only when the gate was asked, as the API does.
@@ -166,7 +166,7 @@ test('every decision and every load goes to the session record file, appended to
   await load('test-runner')
   const lines = (files[path] as string).trim().split('\n').map((line) => JSON.parse(line))
   expect(lines[0]).toEqual({ earlier: true })
-  expect(lines[1]).toMatchObject({ source: 'prompt', text: 'fix the failing tests', pick: 'test-runner', answered: true })
+  expect(lines[1]).toMatchObject({ source: 'prompt', text: 'fix the failing tests', pick: 'test-runner', answered: true, model: 'jev-1.13.0' })
   expect(lines[1].top[0].name).toBe('test-runner')
   expect(lines[2]).toMatchObject({ source: 'find_skill', pick: 'test-runner' })
   expect(lines[3]).toMatchObject({ loaded: 'test-runner', suggested: 'test-runner' })
