@@ -86,7 +86,7 @@ Send a prompt in any project. The transcript should show:
 
 **When it decides.** Once per prompt you send, from that prompt's text alone. A long turn can run into sub-tasks the prompt never named, and with `name-only` the model sees those skills by name only. For that, the mod gives the model a `find_skill` tool. The model calls it with the sub-task in one sentence, and Jev answers with at most one skill: its name and the description the listing leaves out. The model then loads it with the Skill tool, or ignores it. Nothing is pushed mid-turn. A skill that hands off to another skill works as it does without the mod.
 
-`find_skill` offers only skills the listing names, because the Skill tool loads only those. It answers a name and never a SKILL.md: a skill loaded with the Skill tool is attached again after a compaction, and one attached by the mod is not. `findSkill: false` turns the tool off. The tool's description and schema cost about 160 tokens in every session.
+`find_skill` offers only skills the listing names, because the Skill tool loads only those. It skips the gate that a prompt must pass: a model that calls `find_skill` has already decided it wants a skill, and one sub-task sentence without its conversation scores low on the gate questions. The rerank's `fits` check still applies. It answers a name and never a SKILL.md: a skill loaded with the Skill tool is attached again after a compaction, and one attached by the mod is not. `findSkill: false` turns the tool off. The tool's description and schema cost about 160 tokens in every session.
 
 **What it attaches:**
 

@@ -177,7 +177,13 @@ async function choose(
   s: Chooser,
   text: string,
   restrictTo: ReadonlySet<string>,
+  gated: boolean,
 ): Promise<{ pick: Skill | null; reason: string; file: SkillFile | null } | null> {
+  // The gate asks whether a prompt wants a skill at all. A model that calls
+  // find_skill has answered that itself, and one sub-task sentence, read
+  // without its conversation, scores low on it; the rerank's `fits` still
+  // rejects a skill that does not do the thing.
+  const policy = gated ? s.policy : { ...s.policy, gateThreshold: -Infinity }
   const { active, apiKey, modelId, url } = s.backendOf(await $.env.get('TYPESAFE_API_KEY'), await $.env.get('AI_GATEWAY_API_KEY'))
 
   /** One request to the active backend, or null on timeout, error or a non-2xx. */
@@ -321,7 +327,7 @@ async function choose(
       $.ui.log(`[jev-skill-suggestion] built-in classifier failed: ${String(error)}`)
     }
   }
-  // What the decision model actually answered, whatever the s.policy then
+  // What the decision model actually answered, whatever the policy then
   // does with it. This is the line that proves the ranking ran.
   if (s.logDecisions) {
     const ms = (await $.clock.now()) - startedAt
@@ -335,9 +341,9 @@ async function choose(
   // Before the listing has been seen, `$.command.list()` may name a skill
   // the model is not allowed to invoke; its own frontmatter tells.
   const barred: string[] = []
-  if (active && s.rerankEnabled && wide && passesGate(wide, s.policy)) {
+  if (active && s.rerankEnabled && wide && passesGate(wide, policy)) {
     const candidates: Candidate[] = []
-    for (const skill of shortlistOf(wide, skills, s.policy.shortlist)) {
+    for (const skill of shortlistOf(wide, skills, policy.shortlist)) {
       const body = await bodyOf(skill, pluginOf.get(skill.name))
       if (!modelInvocable(body)) {
         barred.push(skill.name)
@@ -361,7 +367,7 @@ async function choose(
   }
 
   const offered = barred.length > 0 ? skills.filter((skill) => !barred.includes(skill.name)) : skills
-  let decision = decide(wide, rerank, offered, s.policy, rerankAttempted)
+  let decision = decide(wide, rerank, offered, policy, rerankAttempted)
   let pick = decision.name ? (skills.find((skill) => skill.name === decision.name) ?? null) : null
   // The winner's own frontmatter has the last word, whichever path picked it.
   if (pick && !barred.includes(pick.name) && !modelInvocable(await bodyOf(pick, pluginOf.get(pick.name)))) {
@@ -554,7 +560,7 @@ export const register: Register = (on, options) => {
 
     // Content mode loads the skill itself, so it is not bound to what the
     // engine lists; "suggest" leaves loading to the Skill tool, which is.
-    const choice = await choose($, state, e.text, injectContent ? new Set() : listed)
+    const choice = await choose($, state, e.text, injectContent ? new Set() : listed, true)
     if (!choice) return next(e)
     const { pick, file } = choice
     // A row in the transcript scrolls away; this line stays on screen.
@@ -637,7 +643,7 @@ export const register: Register = (on, options) => {
     try {
       // The model loads the answer with the Skill tool, so only what the
       // engine lists is offered.
-      if (task) pick = (await choose($, state, task, listed))?.pick ?? null
+      if (task) pick = (await choose($, state, task, listed, false))?.pick ?? null
     } catch (error) {
       $.ui.log(`[jev-skill-suggestion] find_skill failed: ${String(error)}`)
     }

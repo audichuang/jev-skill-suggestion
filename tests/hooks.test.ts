@@ -3,7 +3,7 @@ import type { EngineInterface, Hook, Next, On, PromptSubmitInput, SessionStartIn
 import { register } from '../hooks/jev-skill-suggestion.ts'
 
 /** The mod's prompt.submit hook, registered with `options`, and a `$` that answers from memory. */
-function seat(options: Record<string, unknown>, world: { env?: Record<string, string>; files?: Record<string, string>; fits?: number }) {
+function seat(options: Record<string, unknown>, world: { env?: Record<string, string>; files?: Record<string, string>; fits?: number; gate?: number }) {
   const hooks: Record<string, unknown> = {}
   register(((event: string, hook: unknown) => {
     hooks[event] = hook
@@ -22,6 +22,13 @@ function seat(options: Record<string, unknown>, world: { env?: Record<string, st
           text: JSON.stringify({ answers: {
             which: { type: 'choice', choice: 'test-runner' },
             'fits::test-runner': { type: 'noul', noul: world.fits ?? 0.9 },
+            ...(world.gate === undefined
+              ? {}
+              : {
+                  'gate::acts_on_user_system': { type: 'noul', noul: world.gate },
+                  'gate::would_follow_documented_procedure': { type: 'noul', noul: world.gate },
+                  'gate::prose_suffices': { type: 'noul', noul: 1 - world.gate },
+                }),
           } }),
         }
       },
@@ -91,4 +98,18 @@ test('find_skill is not registered with findSkill off', async () => {
   const withSpy = { ...$, tool: { register: async (spec: unknown) => (registered.push(spec), { tool: 'x' }) } } as unknown as EngineInterface
   await (hooks['session.start'] as Hook<'session.start'>)(withSpy, {} as SessionStartInput, (async (e: unknown) => e) as never)
   expect(registered).toEqual([])
+})
+
+test('find_skill skips the gate a prompt must pass: the model calling it already wants a skill', async () => {
+  const { ask, hooks, $ } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, gate: 0.1 })
+  const prompted = await ask('fix the failing tests')
+  expect('context' in prompted ? prompted.context : undefined).toBeUndefined()
+  const pass = (async (e: unknown) => e) as never
+  await (hooks['session.start'] as Hook<'session.start'>)($, {} as SessionStartInput, pass)
+  const answer = await (hooks['tool.call'] as Hook<'tool.call'>)(
+    $,
+    { tool: 'mcp__jev__find_skill', tool_use_id: 't', task: 'fix the failing tests' } as unknown as ToolCallInput,
+    pass,
+  )
+  expect('result' in answer && String(answer.result)).toContain('skill: "test-runner"')
 })
