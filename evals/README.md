@@ -79,5 +79,6 @@ Kept the same day: the `choice`'s winner must clear the bar on its own `fits` (0
 | **Earlier messages only (0.7.4)** | **36** | 2 | **26** | 5 |
 
 - Misses across the 74 went from 11 to 5. The extra wrong pick is in the project 6: a fund question drew a neighbouring fund skill at `fits` 0.73.
-- `VAGUE_TASK` 0.3 to 0.4 scored the same on the 38 and the batch; 0.3 kept.
+- `VAGUE_TASK` 0.3 to 0.4 scored the same on the 38 and the batch; 0.3 kept, but it is the edge of that plateau, not its middle: the unwanted follow-ups with a mid `fits` (0.65–0.72) now come back at `names_its_task` 0.15–0.29, one at 0.29, so 0.25 lets one back in and 0.2 three. Check these first when the model changes.
+- Case by case on the 38, only two picks moved: the PR case, and a case that accepts either answer went from none to `research`.
 - The pointer-word version brought back five unwanted picks on the 38.
