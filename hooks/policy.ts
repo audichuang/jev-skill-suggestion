@@ -735,6 +735,36 @@ export function fitsBar(wide: Wide, config: PolicyConfig): number {
   return Math.max(config.fitsThreshold, VAGUE_FITS)
 }
 
+/**
+ * Whether a prompt gets a suggestion at all: not empty, not a typed `/name`
+ * (which already names its skill), and not a reply like "繼續" that carries
+ * no task of its own.
+ */
+export function routable(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed || /^\/\S/.test(trimmed)) return false
+  return !contextFree(text)
+}
+
+/**
+ * The shortlist the second request reads. A shortlisted skill that may not
+ * be invoked is barred and dropped, not replaced by the next in the ranking.
+ */
+export function rerankCandidates(
+  wide: Wide,
+  skills: readonly Skill[],
+  count: number,
+  invocable: (name: string) => boolean,
+): { candidates: Skill[]; barred: string[] } {
+  const candidates: Skill[] = []
+  const barred: string[] = []
+  for (const skill of shortlistOf(wide, skills, count)) {
+    if (invocable(skill.name)) candidates.push(skill)
+    else barred.push(skill.name)
+  }
+  return { candidates, barred }
+}
+
 export interface Suggestion {
   /** The one skill to suggest, or null for "nothing here applies". */
   name: string | null
@@ -752,13 +782,24 @@ export function decide(
   rerank: Rerank | null,
   skills: readonly Skill[],
   config: PolicyConfig,
-  /**
-   * Whether a second request was made: with one attempted and no answer,
-   * nothing is suggested, since the first request's winner has not had its
-   * false-positive check. Off means the second request was never meant to
-   * run, and the top of the ranking is the whole answer.
-   */
-  rerankAttempted = false,
+  {
+    rerankAttempted = false,
+    rerankOn = false,
+  }: {
+    /**
+     * Whether a second request was made: with one attempted and no answer,
+     * nothing is suggested, since the first request's winner has not had its
+     * false-positive check.
+     */
+    rerankAttempted?: boolean
+    /**
+     * Whether the second request is meant to run. On with no rerank at all
+     * (every shortlisted skill barred, so the ranking's next one would
+     * stand) the pick was never read, which is no answer. Off, the top of
+     * the ranking is the whole answer.
+     */
+    rerankOn?: boolean
+  } = {},
 ): Suggestion {
   if (!wide) return { name: null, reason: 'no answer' }
   if (!passesGate(wide, config)) {
@@ -771,6 +812,7 @@ export function decide(
   if (shortlist.length === 0) return { name: null, reason: 'nothing ranked' }
 
   if (!rerank && rerankAttempted) return { name: null, reason: 'rerank gave no answer; no suggestion' }
+  if (!rerank && rerankOn) return { name: null, reason: 'no rerank read the pick' }
 
   if (rerank) {
     const values = Object.values(rerank.fits)

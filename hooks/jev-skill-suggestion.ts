@@ -93,6 +93,8 @@ import {
   commandLike,
   configDirOf,
   contextFree,
+  rerankCandidates,
+  routable,
   decide,
   describeRerank,
   describeSetup,
@@ -413,15 +415,16 @@ async function choose(
   // the model is not allowed to invoke; its own frontmatter tells.
   const barred: string[] = []
   if (active && ctx.rerankEnabled && wide && passesGate(wide, ctx.policy)) {
-    const candidates: Candidate[] = []
+    const bodies = new Map<string, string | null>()
     for (const skill of shortlistOf(wide, skills, ctx.policy.shortlist)) {
-      const body = (await fileOf(skill, pluginOf.get(skill.name)))?.markdown ?? null
-      if (!modelInvocable(body)) {
-        barred.push(skill.name)
-        continue
-      }
-      candidates.push({ ...skill, detail: detailOf(skill, body, ctx.excerptChars) })
+      bodies.set(skill.name, (await fileOf(skill, pluginOf.get(skill.name)))?.markdown ?? null)
     }
+    const picked = rerankCandidates(wide, skills, ctx.policy.shortlist, (name) => modelInvocable(bodies.get(name) ?? null))
+    barred.push(...picked.barred)
+    const candidates: Candidate[] = picked.candidates.map((skill) => ({
+      ...skill,
+      detail: detailOf(skill, bodies.get(skill.name) ?? null, ctx.excerptChars),
+    }))
     if (candidates.length > 0) {
       const rerankStartedAt = await $.clock.now()
       rerankAttempted = true
@@ -438,15 +441,11 @@ async function choose(
   }
 
   const offered = barred.length > 0 ? skills.filter((skill) => !barred.includes(skill.name)) : skills
-  let decision = decide(wide, rerank, offered, ctx.policy, rerankAttempted)
+  let decision = decide(wide, rerank, offered, ctx.policy, {
+    rerankAttempted,
+    rerankOn: Boolean(active) && ctx.rerankEnabled,
+  })
   let pick = decision.name ? (skills.find((skill) => skill.name === decision.name) ?? null) : null
-  // With the rerank on, its `fits` is the check against a wrong pick: a pick
-  // it never read (every shortlisted skill barred, so the ranking's next one
-  // stands, at 0.05 in one live turn) is no answer.
-  if (pick && active && ctx.rerankEnabled && !rerank) {
-    decision = { name: null, reason: 'no rerank read the pick' }
-    pick = null
-  }
   // The winner's own frontmatter has the last word, whichever path picked it.
   if (pick && !barred.includes(pick.name) && !modelInvocable((await fileOf(pick, pluginOf.get(pick.name)))?.markdown ?? null)) {
     barred.push(pick.name)
@@ -639,10 +638,11 @@ export const register: Register = (on, options) => {
     // Notifications and peer messages are not tasks; a typed `/name` already
     // names its skill; "ok" or "繼續" carries no task the prompt alone shows.
     // None of them gets a suggestion.
-    if (!e.text.trim() || /^\/\S/.test(e.text.trim())) return next(e)
     if (e.origin && NOT_A_TASK.has(e.origin.kind)) return next(e)
-    if (contextFree(e.text)) {
-      if (logDecisions) $.ui.log('[jev-skill-suggestion] no suggestion: a reply with no task of its own')
+    if (!routable(e.text)) {
+      if (logDecisions && e.text.trim() && contextFree(e.text)) {
+        $.ui.log('[jev-skill-suggestion] no suggestion: a reply with no task of its own')
+      }
       return next(e)
     }
 

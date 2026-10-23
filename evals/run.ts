@@ -31,10 +31,11 @@ import {
   passesGate,
   readRerank,
   readWide,
+  rerankCandidates,
+  routable,
   requestBody,
   requestHeaders,
   rerankQuestions,
-  shortlistOf,
   wideQuestions,
   type Candidate,
   type PolicyConfig,
@@ -94,8 +95,7 @@ for (const key of Object.keys(enabled).filter((key) => enabled[key] === true)) {
 }
 
 if (reverse) skills.reverse()
-// Every skill the model may invoke, the same for every case.
-const offered = skills.filter((skill) => modelInvocable(files.get(skill.name) ?? null))
+const invocable = (name: string) => modelInvocable(files.get(name) ?? null)
 
 // One request, cached by its body.
 const url = endpoint('typesafe', DEFAULT_BASE_URL.typesafe)
@@ -119,15 +119,32 @@ const tally = { right: 0, wrongSkill: 0, falsePositive: 0, falseNegative: 0 }
 const gates: { want: boolean; gate: number | null; fits: number | null }[] = []
 const f2 = (n: number | null | undefined) => (typeof n === 'number' ? n.toFixed(2) : ' n/d')
 
+let notRouted = 0
 for (const c of cases) {
   const context = noContext ? null : (c.context ?? null)
+  // The hook sends nothing for these, so neither does the replay.
+  if (!routable(c.text)) {
+    notRouted++
+    const ok = c.expect.includes(null)
+    if (ok) tally.right++
+    else tally.falseNegative++
+    gates.push({ want: !c.expect.includes(null), gate: null, fits: null })
+    console.log(
+      `${ok ? 'ok  ' : 'MISS'} skip (not routed) pick -  want ${c.expect.map((e) => e ?? '-').join('|')}\n     ${c.text.slice(0, 70)}`,
+    )
+    continue
+  }
   const wideAnswer = await ask(c.text, wideQuestions('typesafe', skills), context)
   served ||= modelOf(wideAnswer) ?? ''
   const wide = readWide(wideAnswer)
   let rerank = null
   let rerankAttempted = false
+  let offered = skills
   if (wide && passesGate(wide, policy)) {
-    const candidates: Candidate[] = shortlistOf(wide, offered, policy.shortlist).map((skill) => ({
+    const shortlisted = rerankCandidates(wide, skills, policy.shortlist, invocable)
+    // A barred skill is left out of what the policy may pick, as live.
+    offered = skills.filter((skill) => !shortlisted.barred.includes(skill.name))
+    const candidates: Candidate[] = shortlisted.candidates.map((skill) => ({
       ...skill,
       detail: detailOf(skill, files.get(skill.name) ?? null, 700),
     }))
@@ -136,7 +153,7 @@ for (const c of cases) {
       rerank = readRerank(await ask(c.text, rerankQuestions('typesafe', candidates), context))
     }
   }
-  const pick = decide(wide, rerank, offered, policy, rerankAttempted).name
+  const pick = decide(wide, rerank, offered, policy, { rerankAttempted, rerankOn: true }).name
   const ok = c.expect.includes(pick)
   if (ok) tally.right++
   else if (pick === null) tally.falseNegative++
@@ -153,7 +170,7 @@ for (const c of cases) {
 
 const spread = (want: boolean, key: 'gate' | 'fits') =>
   gates.filter((g) => g.want === want && g[key] !== null).map((g) => (g[key] as number).toFixed(2)).sort().join(' ')
-console.log(`\nmodel ${served} (asked ${model})${reverse ? ', catalog reversed' : ''} · ${skills.length} skills · ${cases.length} cases`)
+console.log(`\nmodel ${served} (asked ${model})${reverse ? ', catalog reversed' : ''} · ${skills.length} skills · ${cases.length} cases · ${notRouted} not routed`)
 console.log(
   `right ${tally.right} · wrong skill ${tally.wrongSkill} · suggested when none wanted ${tally.falsePositive} · missed ${tally.falseNegative}`,
 )

@@ -48,6 +48,8 @@ import {
   canonical,
   configDirOf,
   contextFree,
+  rerankCandidates,
+  routable,
   underConfigDir,
   wideQuestions,
 } from '../hooks/policy.ts'
@@ -231,7 +233,7 @@ test('with the rerank off the top of the ranking is suggested; with it attempted
     name: 'powerpoint',
     reason: 'top of 4 (0.70), no rerank',
   })
-  expect(decide(wide, null, skills, config, true)).toEqual({
+  expect(decide(wide, null, skills, config, { rerankAttempted: true })).toEqual({
     name: null,
     reason: 'rerank gave no answer; no suggestion',
   })
@@ -566,4 +568,30 @@ test('the recent context is the turn before the prompt: the prompt itself is ski
   // Mid-turn, the prompt being worked on is the context.
   expect(recentContextOf(messages, null)?.previous_user_message).toBe('查無資料ㄟ 為什麼？？')
   expect(recentContextOf([], 'hi')).toBeNull()
+})
+
+test('a prompt is routed unless it is empty, a typed /name, or a reply with no task', () => {
+  expect(routable('')).toBe(false)
+  expect(routable('  \n')).toBe(false)
+  expect(routable('/pr fix')).toBe(false)
+  expect(routable('繼續')).toBe(false)
+  expect(routable('make a deck from this outline')).toBe(true)
+})
+
+test('with the rerank on and none read, the pick stands for nothing', () => {
+  const wide = readWide(wideAnswer('powerpoint', DECK, ACTION))
+  expect(decide(wide, null, skills, config, { rerankOn: true })).toEqual({
+    name: null,
+    reason: 'no rerank read the pick',
+  })
+  expect(decide(wide, null, skills, config, { rerankAttempted: true, rerankOn: true }).reason).toBe(
+    'rerank gave no answer; no suggestion',
+  )
+})
+
+test('a barred skill is dropped from the rerank shortlist and not replaced', () => {
+  const wide = readWide(wideAnswer('powerpoint', DECK, ACTION))
+  const { candidates, barred } = rerankCandidates(wide!, skills, 3, (name) => name !== 'pptx-author')
+  expect(barred).toEqual(['pptx-author'])
+  expect(candidates.map((s) => s.name)).toEqual(['powerpoint', 'commit'])
 })

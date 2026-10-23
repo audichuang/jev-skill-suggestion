@@ -52,7 +52,7 @@ One change at a time, each kept only if it did not score worse.
 - Every pair of `names_its_task` 0.2–0.35 × `fits` 0.75–0.85 scored 31 on the 34; 0.3 is where wrong picks reached zero. Across all 70 cases: 51 → 55 right, wrong or unwanted picks 13 → 4, misses 6 → 11.
 - The cost is mid-`fits` picks on vague messages: "擬去 /agent-reach …" (the person had typed the command), and in the batch set a review at 0.58 and a `bfs-cloud-onprem` question at 0.54 whose `names_its_task` came back 0.20 though it stands on its own. A miss leaves the model the listing; a wrong pick attaches the wrong SKILL.md.
 - `find_skill` asks no gate questions, so it keeps `fitsThreshold`.
-- `run.ts` drops `disable-model-invocation` skills before taking the shortlist; the mod takes the top three and then drops them, so a live shortlist can come out empty (0.7.1 then suggests nothing). "好幫我完成優化吧" is skill-creator at 0.71 here and no rerank at all live.
+- Until 0.7.3, `run.ts` dropped `disable-model-invocation` skills before taking the shortlist while the mod drops them after, and it ranked prompts the mod never sends (a typed `/name`, "繼續"). Both now go through `routable` and `rerankCandidates` in `policy.ts`, as the hook does; the three sets scored the same after the change (32 of 35, 3 of 6, 21 of 30), so the numbers above stand.
 
 ## Tried and dropped, 2026-10-23: `fits` reading the SKILL.md excerpt
 
