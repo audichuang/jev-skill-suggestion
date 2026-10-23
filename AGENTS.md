@@ -9,7 +9,9 @@ Claude Code mod（hooks module plugin），fork 自 davila7/claude-code-template
 - 已安裝同名 plugin 時，`--plugin-dir` 會被安裝版蓋掉（debug log 寫 `@jev-skill-suggestion`，不是 `@inline`）。先 `claude plugin disable jev-skill-suggestion@jev-skill-suggestion`，跑完再 `enable`。macOS 沒有 `timeout` 指令，別拿它包 `claude -p`；加 `--disallowedTools` 時提示詞放在它前面，否則會被當成工具名吃掉，session 根本沒跑。
 - 每次判斷會寫進 `~/.claude/jev-skill-suggestion/decisions/<session id>.jsonl`，比對行為時讀這個檔比翻 debug log 準。
 - 改到問 Jev 的問題、門檻或模型，前後都跑 `bun evals/run.ts`（用法見 `evals/README.md`），分數沒變好就不留，結果記進 `evals/README.md`。照官方文件改的寫法實測也可能變差。
-- 這個 repo 是公開的。從某個專案的對話取出的題目和紀錄（含它的表名、SQL、帳號）只能放在 `~/.claude/jev-skill-suggestion/evals/`，用 `--cases` 傳入，不進 repo。
+- 只看總分會漏掉一題變好、一題變差互相抵消。號稱不改行為的重構要逐題比 pick：舊 commit 開 worktree，`evals/.cache` 用 symlink 共用，兩邊各跑一次再 diff。兩組專案題也要跑，它們才是沒拿來調門檻的題目。
+- 一題的 `expect` 同時接受 `null` 和某個 skill 時，在 `note` 寫明為什麼兩個都對；不然它就抓不到那個 skill 又被推出來。
+- 這個 repo 是公開的。從某個專案的對話取出的題目和紀錄（含它的表名、SQL、帳號、專案自己的 skill 名稱，`evals/README.md` 的文字也算）只能放在 `~/.claude/jev-skill-suggestion/evals/`，用 `--cases` 傳入，不進 repo。
 
 ## 不可退回的設計
 
@@ -17,6 +19,7 @@ Claude Code mod（hooks module plugin），fork 自 davila7/claude-code-template
 - `hideListing` 預設 `false`。content 模式沒挑到 skill 時不附任何文字，讓模型自己從清單挑。
 - 所有失敗路徑都 fail-open：逾時、非 2xx、例外都只是不給建議，mod 絕不能擋住 prompt。
 - setup 只修剪 user skill。專案自己的 skill 保留描述，由使用者決定放多少，這是使用者明確的決定。
+- 推錯或漏推時，先查我們問 Jev 的問法和門檻，不要去改使用者 skill 的描述來遷就 Jev。使用者認為自己的描述是清楚的，問題該在 mod 這邊解決。
 - `DEFAULT_MODEL.typesafe` 釘版本 ID，不用 `jev-latest`：門檻是對著那一版調的，alias 會自己移動。換版本要重跑 eval 再改門檻。
 - plugin 名稱 `jev-skill-suggestion` 不改：使用者 `pluginConfigs` 的 key 是 `<name>@<載入來源>`，改名會讓所有人的設定失效。
 
