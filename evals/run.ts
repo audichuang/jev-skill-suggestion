@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import {
   DEFAULT_BASE_URL,
+  DEFAULT_EXCERPT_CHARS,
   DEFAULT_MODEL,
   configDirOf,
   installPathsOf,
@@ -88,10 +89,13 @@ for (const entry of skillDirs(`${config}/skills`)) add(entry, `${config}/skills/
 const installed = readFileSync(`${config}/plugins/installed_plugins.json`, 'utf8')
 for (const key of Object.keys(enabled).filter((key) => enabled[key] === true)) {
   const plugin = key.split('@')[0] as string
-  for (const path of installPathsOf(installed, key)) {
-    const dir = `${path}/skills`
-    for (const entry of skillDirs(dir)) add(`${plugin}:${entry}`, `${dir}/${entry}/SKILL.md`)
-  }
+  // A malformed entry skips that plugin, as the hook's `fileOf` does.
+  try {
+    for (const path of installPathsOf(installed, key)) {
+      const dir = `${path}/skills`
+      for (const entry of skillDirs(dir)) add(`${plugin}:${entry}`, `${dir}/${entry}/SKILL.md`)
+    }
+  } catch {}
 }
 
 if (reverse) skills.reverse()
@@ -143,10 +147,10 @@ for (const c of cases) {
   if (wide && passesGate(wide, policy)) {
     const shortlisted = rerankCandidates(wide, skills, policy.shortlist, invocable)
     // A barred skill is left out of what the policy may pick, as live.
-    offered = skills.filter((skill) => !shortlisted.barred.includes(skill.name))
+    offered = shortlisted.offered
     const candidates: Candidate[] = shortlisted.candidates.map((skill) => ({
       ...skill,
-      detail: detailOf(skill, files.get(skill.name) ?? null, 700),
+      detail: detailOf(skill, files.get(skill.name) ?? null, DEFAULT_EXCERPT_CHARS),
     }))
     if (candidates.length > 0) {
       rerankAttempted = true

@@ -598,9 +598,11 @@ test('with the rerank on and none read, the pick stands for nothing', () => {
 
 test('a barred skill is dropped from the rerank shortlist and not replaced', () => {
   const wide = readWide(wideAnswer('powerpoint', DECK, ACTION))
-  const { candidates, barred } = rerankCandidates(wide!, skills, 3, (name) => name !== 'pptx-author')
+  if (!wide) throw new Error('no wide answer')
+  const { candidates, barred, offered } = rerankCandidates(wide, skills, 3, (name) => name !== 'pptx-author')
   expect(barred).toEqual(['pptx-author'])
   expect(candidates.map((s) => s.name)).toEqual(['powerpoint', 'commit'])
+  expect(offered.map((s) => s.name)).toEqual(skills.map((s) => s.name).filter((name) => name !== 'pptx-author'))
 })
 
 test('with the whole top three barred, the fourth is not suggested in their place', () => {
@@ -609,8 +611,7 @@ test('with the whole top three barred, the fourth is not suggested in their plac
     gate: 0.6,
     gateValues: {},
   }
-  const { candidates, barred } = rerankCandidates(wide, skills, 3, (name) => name === 'pdf')
+  const { candidates, offered } = rerankCandidates(wide, skills, 3, (name) => name === 'pdf')
   expect(candidates).toEqual([])
-  const offered = skills.filter((skill) => !barred.includes(skill.name))
   expect(decide(wide, null, offered, config, { rerankOn: true })).toEqual({ name: null, reason: 'no rerank read the pick' })
 })

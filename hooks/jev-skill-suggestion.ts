@@ -83,6 +83,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 import {
   DEFAULT_BASE_URL,
+  DEFAULT_EXCERPT_CHARS,
   DEFAULT_MODEL,
   FIND_SKILL_TOOL,
   NONE,
@@ -414,14 +415,16 @@ async function choose(
   // Before the listing has been seen, `$.command.list()` may name a skill
   // the model is not allowed to invoke; its own frontmatter tells.
   const barred: string[] = []
+  let offered = skills
   if (active && ctx.rerankEnabled && wide && passesGate(wide, ctx.policy)) {
     const bodies = new Map<string, string | null>()
     for (const skill of shortlistOf(wide, skills, ctx.policy.shortlist)) {
       bodies.set(skill.name, (await fileOf(skill, pluginOf.get(skill.name)))?.markdown ?? null)
     }
-    const picked = rerankCandidates(wide, skills, ctx.policy.shortlist, (name) => modelInvocable(bodies.get(name) ?? null))
-    barred.push(...picked.barred)
-    const candidates: Candidate[] = picked.candidates.map((skill) => ({
+    const shortlisted = rerankCandidates(wide, skills, ctx.policy.shortlist, (name) => modelInvocable(bodies.get(name) ?? null))
+    barred.push(...shortlisted.barred)
+    offered = shortlisted.offered
+    const candidates: Candidate[] = shortlisted.candidates.map((skill) => ({
       ...skill,
       detail: detailOf(skill, bodies.get(skill.name) ?? null, ctx.excerptChars),
     }))
@@ -440,7 +443,6 @@ async function choose(
     }
   }
 
-  const offered = barred.length > 0 ? skills.filter((skill) => !barred.includes(skill.name)) : skills
   let decision = decide(wide, rerank, offered, ctx.policy, {
     rerankAttempted,
     rerankOn: Boolean(active) && ctx.rerankEnabled,
@@ -520,7 +522,7 @@ export const register: Register = (on, options) => {
   const alwaysListed = parseNames(text('alwaysListed', ''))
   const neverSuggested = parseNames(text('neverSuggested', ''))
   const rerankEnabled = flag('rerank', true)
-  const excerptChars = number('excerptChars', 700)
+  const excerptChars = number('excerptChars', DEFAULT_EXCERPT_CHARS)
   const timeoutMs = number('timeoutMs', 800)
   // The second request carries each shortlisted SKILL.md's opening and one
   // question per candidate, so it gets its own, longer budget.

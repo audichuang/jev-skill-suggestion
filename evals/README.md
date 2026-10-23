@@ -50,7 +50,7 @@ One change at a time, each kept only if it did not score worse.
 | Project batch 30, before / after | 23 → 21 | 2 → 2 | 1 → 1 | 4 → 6 |
 
 - Every pair of `names_its_task` 0.2–0.35 × `fits` 0.75–0.85 scored 31 on the 34; 0.3 is where wrong picks reached zero. Across all 70 cases: 51 → 55 right, wrong or unwanted picks 13 → 4, misses 6 → 11.
-- The cost is mid-`fits` picks on vague messages: "擬去 /agent-reach …" (the person had typed the command), and in the batch set a review at 0.58 and a `bfs-cloud-onprem` question at 0.54 whose `names_its_task` came back 0.20 though it stands on its own. A miss leaves the model the listing; a wrong pick attaches the wrong SKILL.md.
+- The cost is mid-`fits` picks on vague messages: "擬去 /agent-reach …" (the person had typed the command), and in the batch set a review at 0.58 and a project-skill question at 0.54 whose `names_its_task` came back 0.20 though it stands on its own. A miss leaves the model the listing; a wrong pick attaches the wrong SKILL.md.
 - `find_skill` asks no gate questions, so it keeps `fitsThreshold`.
 - Until 0.7.3, `run.ts` dropped `disable-model-invocation` skills before taking the shortlist while the mod drops them after, and it ranked prompts the mod never sends (a typed `/name`, "繼續"). Both now go through `routable` and `rerankCandidates` in `policy.ts`, as the hook does; the three sets scored the same after the change (32 of 35, 3 of 6, 21 of 30), so the numbers above stand.
 
@@ -78,7 +78,8 @@ Kept the same day: the `choice`'s winner must clear the bar on its own `fits` (0
 | Listing pointer words ("it", "do it", "continue") | 30 | 2 | 23 | 13 |
 | **Earlier messages only (0.7.4)** | **36** | 2 | **26** | 5 |
 
-- Misses across the 74 went from 11 to 5. The extra wrong pick is in the project 6: a fund question drew a neighbouring fund skill at `fits` 0.73.
+- Misses across the 74 went from 11 to 5. The extra wrong pick is in the project 6: a domain question drew a neighbouring domain skill at `fits` 0.73.
+- Why it is kept although the project 6 fell from 3 to 2 and wrong or unwanted picks rose from 4 to 5: right answers across the 74 rose from 59 to 64, and the batch 30, which played no part in choosing the wording, rose from 21 to 26. One more wrong pick against six fewer misses suits a mod whose misses leave the model to pick from the listing. Six cases are too few to call the drop a trend; it is the first thing to recheck.
 - `VAGUE_TASK` 0.3 to 0.4 scored the same on the 38 and the batch; 0.3 kept, but it is the edge of that plateau, not its middle: the unwanted follow-ups with a mid `fits` (0.65–0.72) now come back at `names_its_task` 0.15–0.29, one at 0.29, so 0.25 lets one back in and 0.2 three. Check these first when the model changes.
 - Case by case on the 38, only two picks moved: the PR case, and a case that accepts either answer went from none to `research`.
 - The pointer-word version brought back five unwanted picks on the 38.

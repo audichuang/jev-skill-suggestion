@@ -513,6 +513,9 @@ export function recentContextOf(
   return { previous_user_message: user.slice(0, 400), assistant_reply: reply.slice(-600) }
 }
 
+/** How much of a skill's body the second request reads, unless `excerptChars` says otherwise. */
+export const DEFAULT_EXCERPT_CHARS = 700
+
 /** How much of a long prompt the decision model reads: its opening, and its end. */
 export const REQUEST_HEAD_CHARS = 8_000
 export const REQUEST_TAIL_CHARS = 4_000
@@ -750,20 +753,21 @@ export function routable(text: string): boolean {
 /**
  * The shortlist the second request reads. A shortlisted skill that may not
  * be invoked is barred and dropped, not replaced by the next in the ranking.
+ * `offered` is `skills` without the barred ones.
  */
 export function rerankCandidates(
   wide: Wide,
   skills: readonly Skill[],
   count: number,
   invocable: (name: string) => boolean,
-): { candidates: Skill[]; barred: string[] } {
+): { candidates: Skill[]; barred: string[]; offered: Skill[] } {
   const candidates: Skill[] = []
   const barred: string[] = []
   for (const skill of shortlistOf(wide, skills, count)) {
     if (invocable(skill.name)) candidates.push(skill)
     else barred.push(skill.name)
   }
-  return { candidates, barred }
+  return { candidates, barred, offered: skills.filter((skill) => !barred.includes(skill.name)) }
 }
 
 export interface Suggestion {
@@ -825,9 +829,9 @@ export function decide(
     if (!shortlist.some((skill) => skill.name === rerank.winner)) {
       return { name: null, reason: `rerank named ${rerank.winner}, not on the shortlist` }
     }
-    // The bar above only looks at the best fit on the list. When the named
-    // choice is not that one, the two answers disagree: abstain rather than
-    // trust either.
+    // The bar above only looks at the best fit on the list. The named choice
+    // must clear it on its own fits; one that does is taken even when another
+    // candidate fits better.
     const fit = rerank.fits[rerank.winner]
     if (fit === undefined || !Number.isFinite(fit)) {
       return { name: null, reason: `winner ${rerank.winner} has no fits` }

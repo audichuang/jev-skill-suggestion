@@ -147,8 +147,8 @@ With `logDecisions` on (the default), the mod reports every step of its own work
 ```
 [jev-skill-suggestion] ready on typesafe (https://api.typesafe.ai/v1/systemone); leaving the skill listing in place
 [jev-skill-suggestion] jev: needs a skill 0.76 · top of 58: powerpoint (0.70), pptx-author (0.30), chroma (0.00) · 160ms
-[jev-skill-suggestion] jev: rerank → pptx-author (0.81) · fits powerpoint 0.73, pptx-author 0.38, chroma 0.02 · 90ms · 3/3 bodies read
-[jev-skill-suggestion] suggesting /pptx-author: rerank of 3, fits 0.38
+[jev-skill-suggestion] jev: rerank → pptx-author (0.81) · fits powerpoint 0.73, pptx-author 0.84, chroma 0.02 · 90ms · 3/3 bodies read
+[jev-skill-suggestion] suggesting /pptx-author: rerank of 3, fits 0.84
 [jev-skill-suggestion] injected /pptx-author from /home/me/.claude/skills/pptx-author/SKILL.md (4210 characters)
 [jev-skill-suggestion] jev: needs a skill 0.12 · top of 58: debug (0.41), code-review (0.22), commit (0.05) · 150ms
 [jev-skill-suggestion] no suggestion: needs a skill 0.12 < 0.3
@@ -243,7 +243,10 @@ With a key set, the prompt text and every candidate skill's name and one-line de
 | A `find_skill` tool lets the model ask Jev mid-turn, so a sub-task that turns up after the prompt is not left to a guess from bare names. | — |
 | Every decision, with the request text and the ranking, is kept in a file per session (`recordDecisions`), so a wrong pick can be read back. | — |
 | The turn before the request (the previous user message and the end of the assistant's last reply) goes in `recent_context`, which upstream always sends empty (`sendRecentContext`). | — |
-| A message whose `names_its_task` is under 0.3, a follow-up that leans on earlier turns, needs a best `fits` of 0.8 rather than `fitsThreshold`: such replies drew a half-fitting skill (see `evals/README.md`). | — |
+| A message whose `names_its_task` is under 0.3, a follow-up that leans on earlier turns, needs a best `fits` of 0.8 rather than `fitsThreshold`: such replies drew a half-fitting skill (see `evals/README.md`). With `rerank: false` there is no `fits`, so this bar does not apply. | — |
+| The rerank's winner must clear the bar on its own `fits`; upstream checks only the best `fits` on the shortlist, so a winner at 0.10 beside another at 0.90 was suggested. | — |
+| With `rerank` on, a pick the rerank never read (every shortlisted skill has `disable-model-invocation`) is not suggested; upstream suggested the ranking's next skill. | — |
+| A 200 whose JSON root is not an object (`null`) gives no suggestion; upstream threw inside the prompt hook. | — |
 | A prompt over 12,000 characters reaches Jev as its first 8,000 and last 4,000: a pasted log plus the catalog otherwise comes back 400 `max_tokens_exceeded`, and the person's own words sit after the paste. | — |
 | A fourth gate question (`names_its_task`), a structured `fits` question, `fitsThreshold` 0.5 and the model pinned to `jev-1.14.0`, all measured with `evals/run.ts` (see `evals/README.md`). | Cookbook uses three gate nouls, `fits` 0.30 and `jev-latest` |
 
