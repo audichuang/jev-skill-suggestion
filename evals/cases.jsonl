@@ -15,7 +15,7 @@
 {"text": "Fill in this PDF form and merge it with the cover page", "expect": ["document-skills:pdf"], "note": "handwritten"}
 {"text": "幫我把這份會議紀錄做成 10 頁簡報", "expect": ["document-skills:pptx", "ppt-master:ppt-master", "ppt-storyline"], "note": "handwritten"}
 {"text": "Write the failing test first, then implement the date parser", "expect": ["tdd"], "note": "handwritten"}
-{"text": "幫我開一個 PR 把這個分支推上去", "expect": ["pr"], "note": "handwritten"}
+{"text": "幫我開一個 PR 把這個分支推上去", "expect": ["pr", null], "note": "handwritten: pr writes the body, which the request does not ask for"}
 {"text": "把這三篇論文丟進 NotebookLM 做成 podcast", "expect": ["notebooklm"], "note": "handwritten"}
 {"text": "這個 bug 一直重現不了，幫我系統性地找根因", "expect": ["diagnosing-bugs"], "note": "handwritten"}
 {"text": "幫我在 Twitter 和 Reddit 上找大家怎麼評價 Claude Code 的 mod", "expect": ["agent-reach"], "note": "handwritten"}
@@ -33,3 +33,6 @@
 {"text": "可以，照你說的改", "expect": [null], "note": "handwritten negative: go-ahead"}
 {"text": "幫我把這份 Excel 報表的欄位整理成樞紐分析表，先列出步驟就好", "expect": ["document-skills:xlsx"], "note": "live 0.5.0: fits 0.53 under 0.6"}
 {"text": "好幫我完成優化 \nskillgenie  你要修什麼", "expect": [null, "skillgenie"], "note": "session: got skillgenie (names_its_task 0.09, fits 0.78)", "context": {"previous_user_message": "幫我看看 我剛剛好像有改動 有沒有問題 然後 /agent-reach 去查查看 別人最近怎麼優化這個更準確推薦技能的 ？ 然後jev 判斷這好嗎 現在那麼多判斷模型", "assistant_reply": "我的看法：照外面的數據，換掉 Jev 不太會有明顯好處。更划算的是先處理上面列的弱點：多補這幾類題目，再修 skillgenie、`pr` 這幾個 skill 的描述。"}}
+{"text": "幫我寫這個 PR 的描述", "expect": ["pr"], "note": "handwritten"}
+{"text": "幫我開一個 PR，描述照我們的格式寫", "expect": ["pr"], "note": "handwritten: names its task, but names_its_task came back 0.14"}
+{"text": "把這個分支 push 上去", "expect": [null], "note": "handwritten: pr only writes the body"}

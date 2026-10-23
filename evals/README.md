@@ -67,3 +67,17 @@ Kept the same day: the `choice`'s winner must clear the bar on its own `fits` (0
 - Option order made no difference in totals.
 - Left: follow-ups about skills themselves ("幫我看看這個技能…") still draw skillgenie or skill-creator, and two tasks are now missed (`pr`, whose `fits` came back 0.49).
 - The turn before helps a follow-up whose task is in that turn ("查無資料ㄟ 為什麼？？" after a pasted SQL), and costs one false positive here among follow-ups that wanted nothing. Kept on: the project turns are where a skill was missing; `sendRecentContext: false` turns it off.
+
+## Results, 2026-10-23: `names_its_task` asks about earlier messages only
+
+"幫我開一個 PR，描述照我們的格式寫" names its task, yet `names_its_task` came back 0.14 (the "我們的格式" read as something said before), so the 0.8 bar dropped a `fits` of 0.68. The question now says that the user's own files, branch, project or conventions do not count, only earlier messages. Three PR cases were added and "幫我開一個 PR 把這個分支推上去" now accepts `null` too: `pr` writes the body, which that request does not ask for.
+
+| Run | 38 cases | Project 6 | Project batch 30 | Wrong or unwanted, all 74 |
+|---|---|---|---|---|
+| Old wording | 35 | 3 | 21 | 4 |
+| Listing pointer words ("it", "do it", "continue") | 30 | 2 | 23 | 13 |
+| **Earlier messages only (0.7.4)** | **36** | 2 | **26** | 5 |
+
+- Misses across the 74 went from 11 to 5. The extra wrong pick is in the project 6: a fund question drew a neighbouring fund skill at `fits` 0.73.
+- `VAGUE_TASK` 0.3 to 0.4 scored the same on the 38 and the batch; 0.3 kept.
+- The pointer-word version brought back five unwanted picks on the 38.

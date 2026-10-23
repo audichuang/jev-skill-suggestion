@@ -416,7 +416,7 @@ export const GATE_QUESTIONS: Record<string, string> = {
   prose_suffices:
     "Could a knowledgeable generalist fully satisfy this request in prose, with no tools, no documentation, and no access to the user's files or accounts?",
   names_its_task:
-    'Does this message on its own say what is to be done, specifically enough to start without reading any earlier messages?',
+    'Could someone start on this message without having read the conversation before it? Mentions of the user\'s own files, branch, project or conventions are fine; only references to earlier messages are not.',
 }
 
 /** Gate questions where a yes points away from needing a skill. */

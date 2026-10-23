@@ -120,7 +120,7 @@ Two requests, in the cookbook's shape. Each may come back empty-handed.
 | `acts_on_user_system` | Is the assistant being asked to act on the user's files, accounts, devices or services, rather than only to explain or advise? |
 | `would_follow_documented_procedure` | Would a careful expert consult a specific documented procedure or set of commands, rather than answer from general understanding? |
 | `prose_suffices` | Could a knowledgeable generalist fully satisfy this in prose, with no tools and no access to the user's files? (counts the other way round) |
-| `names_its_task` | Does this message on its own say what is to be done, specifically enough to start without reading earlier messages? |
+| `names_its_task` | Could someone start on this message without having read the conversation before it? Mentions of the user's own files, branch, project or conventions are fine; only references to earlier messages are not. |
 
 Their mean is the gate: under `gateThreshold` (0.30) nothing is suggested, whatever the ranking said. Questions about subject matter would not do this job — *explain what a monad is* and a task that needs a skill are both software. `names_its_task` is this fork's: Jev reads the prompt alone, and a follow-up such as "好幫我完成優化吧" carries its task in earlier turns, so without it such replies were ranked as if they were tasks (see `evals/`).
 
