@@ -14,7 +14,7 @@ Cases taken from a project's sessions carry that project's code and data: keep t
 
 `cases.jsonl` is one case per line: `text`, `expect` (every acceptable answer, `null` for "suggest nothing") and `note`. The `session:` cases are real prompts where the mod made a pick, labelled after the fact; the rest are handwritten. Add a case whenever a wrong suggestion shows up in `~/.claude/jev-skill-suggestion/decisions/`.
 
-The catalog is read from disk (user skills, enabled plugins' skills, minus those turned `off`), so Claude Code's bundled skills are not in it, and the results are this machine's.
+The catalog is read from disk (user skills, enabled plugins' skills, minus those turned `off`), so Claude Code's bundled skills are not in it, and the results are this machine's. Since 0.7.3 the pre-checks, the shortlist and its barred skills, and `decide()` are the hook's own (`routable`, `rerankCandidates` in `policy.ts`): the 71 cases picked exactly as under 0.7.2, case by case. The runner still uses the default `shortlist` (3) and `excerptChars` (700) and ignores `neverSuggested`, so a machine that changed those is not what it measures.
 
 ## Results, 2026-10-16 (33 cases, 83 skills)
 

@@ -595,3 +595,15 @@ test('a barred skill is dropped from the rerank shortlist and not replaced', () 
   expect(barred).toEqual(['pptx-author'])
   expect(candidates.map((s) => s.name)).toEqual(['powerpoint', 'commit'])
 })
+
+test('with the whole top three barred, the fourth is not suggested in their place', () => {
+  const wide = {
+    ranked: ['powerpoint', 'pptx-author', 'commit', 'pdf'].map((name, i) => ({ name, probability: 0.4 - i * 0.1 })),
+    gate: 0.6,
+    gateValues: {},
+  }
+  const { candidates, barred } = rerankCandidates(wide, skills, 3, (name) => name === 'pdf')
+  expect(candidates).toEqual([])
+  const offered = skills.filter((skill) => !barred.includes(skill.name))
+  expect(decide(wide, null, offered, config, { rerankOn: true })).toEqual({ name: null, reason: 'no rerank read the pick' })
+})
