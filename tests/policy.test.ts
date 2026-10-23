@@ -167,6 +167,13 @@ test('the gate is the mean of the oriented nouls: an action passes, a prose ques
   expect(decide(prose, null, skills, config)).toEqual({ name: null, reason: 'needs a skill 0.10 < 0.3' })
 })
 
+test('a response whose JSON root is not an object reads as no answer instead of throwing', () => {
+  for (const body of ['null', '42', '"x"', 'true', '[]', 'not json']) {
+    expect(readWide(body)).toBeNull()
+    expect(readRerank(body)).toBeNull()
+  }
+})
+
 test('the ranking is the distribution, surest first; without one the named choice stands alone', () => {
   const wide = readWide(wideAnswer('powerpoint', DECK, ACTION))
   expect(wide?.ranked.slice(0, 2).map((e) => e.name)).toEqual(['powerpoint', 'pptx-author'])

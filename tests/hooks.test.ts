@@ -8,7 +8,7 @@ import { register } from '../hooks/jev-skill-suggestion.ts'
  */
 function seat(
   options: Record<string, unknown>,
-  world: { env?: Record<string, string>; files?: Record<string, string>; fits?: number; gate?: number; down?: boolean },
+  world: { env?: Record<string, string>; files?: Record<string, string>; fits?: number; gate?: number; down?: boolean; raw?: (request: 'ranking' | 'rerank') => string | undefined },
 ) {
   const hooks: Record<string, unknown> = {}
   // A matcher, when given, sits between the event and the hook.
@@ -28,6 +28,8 @@ function seat(
         auth.push(init.headers.authorization as string)
         bodies.push(init.body)
         if (world.down) return { ok: false, status: 503, text: '' }
+        const raw = world.raw?.(init.body.includes('fits::') ? 'rerank' : 'ranking')
+        if (raw !== undefined) return { ok: true, text: raw }
         return {
           ok: true,
           text: JSON.stringify({ model: 'jev-1.13.0', answers: {
@@ -109,6 +111,20 @@ test('a skill turned off in the user settings is never offered, under CLAUDE_CON
   )
   await ask('fix the failing tests')
   expect(auth).toEqual([])
+})
+
+test('a 200 whose body is not an object (null, 42, "x") fails open for the ranking and the rerank', async () => {
+  for (const body of ['null', '42', '"x"']) {
+    for (const stage of ['ranking', 'rerank'] as const) {
+      const { ask } = seat(
+        { typesafeApiKey: 'k' },
+        { env: { HOME: '/home/u' }, raw: (request) => (request === stage ? body : undefined) },
+      )
+      const e = await ask('fix the failing tests')
+      expect(e.text).toBe('fix the failing tests')
+      expect('context' in e ? e.context : undefined).toBeUndefined()
+    }
+  }
 })
 
 const LISTING = 'Skills:\n- test-runner'

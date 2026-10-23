@@ -564,6 +564,7 @@ function answersOf(responseText: string): Answers | null {
   } catch {
     return null
   }
+  if (parsed === null || typeof parsed !== 'object') return null
   const answers = (parsed as { answers?: Answers }).answers
   return answers && typeof answers === 'object' ? answers : null
 }
