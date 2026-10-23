@@ -440,10 +440,10 @@ async function choose(
   const offered = barred.length > 0 ? skills.filter((skill) => !barred.includes(skill.name)) : skills
   let decision = decide(wide, rerank, offered, ctx.policy, rerankAttempted)
   let pick = decision.name ? (skills.find((skill) => skill.name === decision.name) ?? null) : null
-  // With the gate left out, the rerank's `fits` is the only check against a
-  // wrong pick: a pick it never read (every shortlisted skill barred, so the
-  // ranking's next one stands) is no answer.
-  if (pick && !askGate && !rerank) {
+  // With the rerank on, its `fits` is the check against a wrong pick: a pick
+  // it never read (every shortlisted skill barred, so the ranking's next one
+  // stands, at 0.05 in one live turn) is no answer.
+  if (pick && active && ctx.rerankEnabled && !rerank) {
     decision = { name: null, reason: 'no rerank read the pick' }
     pick = null
   }
