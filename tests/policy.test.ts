@@ -197,6 +197,20 @@ test('the rerank can flip the winner, and its fits nouls can reject the whole sh
   expect(decide(wide, stray, skills, config).name).toBeNull()
 })
 
+test('a message that leans on earlier turns needs a closer fit before anything is suggested', () => {
+  const followUp = (named?: number) => ({
+    ranked: [{ name: 'powerpoint', probability: 0.9 }],
+    gate: 0.5,
+    gateValues: named === undefined ? {} : { names_its_task: named },
+  })
+  const fit = (value: number) => ({ winner: 'powerpoint', confidence: 0.9, fits: { powerpoint: value } })
+  expect(decide(followUp(0.1), fit(0.7), skills, config)).toEqual({ name: null, reason: 'nothing fits, best 0.70 < 0.8' })
+  expect(decide(followUp(0.1), fit(0.9), skills, config).name).toBe('powerpoint')
+  // A message that names its task, or no gate asked at all, keeps the usual threshold.
+  expect(decide(followUp(0.6), fit(0.7), skills, config).name).toBe('powerpoint')
+  expect(decide(followUp(), fit(0.7), skills, config).name).toBe('powerpoint')
+})
+
 test('with the rerank off the top of the ranking is suggested; with it attempted and failed, nothing is', () => {
   const wide = readWide(wideAnswer('powerpoint', DECK, ACTION))
   expect(decide(wide, null, skills, config)).toEqual({

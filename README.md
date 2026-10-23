@@ -124,7 +124,7 @@ Two requests, in the cookbook's shape. Each may come back empty-handed.
 
 Their mean is the gate: under `gateThreshold` (0.30) nothing is suggested, whatever the ranking said. Questions about subject matter would not do this job — *explain what a monad is* and a task that needs a skill are both software. `names_its_task` is this fork's: Jev reads the prompt alone, and a follow-up such as "好幫我完成優化吧" carries its task in earlier turns, so without it such replies were ranked as if they were tasks (see `evals/`).
 
-**Request 2 — read the top three properly.** The same `choice` over the shortlist (`shortlist`, 3), now with each skill's full frontmatter description and the first `excerptChars` (700) of its SKILL.md as the criterion, and one `noul` per candidate — *does this skill do the specific thing the request asks for?* — answered on its own, so all of them can come back low. A shortlist whose best `fits` is under `fitsThreshold` (0.50) is dropped entirely; otherwise the `choice`'s winner is suggested. The two decide different things: the `choice` settles *which*, the `noul`s settle *whether*.
+**Request 2 — read the top three properly.** The same `choice` over the shortlist (`shortlist`, 3), now with each skill's full frontmatter description and the first `excerptChars` (700) of its SKILL.md as the criterion, and one `noul` per candidate — *does this skill do the specific thing the request asks for?* — answered on its own, so all of them can come back low. A shortlist whose best `fits` is under `fitsThreshold` (0.50) is dropped entirely, and when `names_its_task` came back under 0.3 the bar is 0.80; otherwise the `choice`'s winner is suggested. The two decide different things: the `choice` settles *which*, the `noul`s settle *whether*.
 
 This is where lookalikes separate — on one line the skill that *edits* `.pptx` files reads nearly the same as the one that *authors* them; on 700 characters they do not.
 
@@ -243,6 +243,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
 | A `find_skill` tool lets the model ask Jev mid-turn, so a sub-task that turns up after the prompt is not left to a guess from bare names. | — |
 | Every decision, with the request text and the ranking, is kept in a file per session (`recordDecisions`), so a wrong pick can be read back. | — |
 | The turn before the request (the previous user message and the end of the assistant's last reply) goes in `recent_context`, which upstream always sends empty (`sendRecentContext`). | — |
+| A message whose `names_its_task` is under 0.3, a follow-up that leans on earlier turns, needs a best `fits` of 0.8 rather than `fitsThreshold`: such replies drew a half-fitting skill (see `evals/README.md`). | — |
 | A prompt over 12,000 characters reaches Jev as its first 8,000 and last 4,000: a pasted log plus the catalog otherwise comes back 400 `max_tokens_exceeded`, and the person's own words sit after the paste. | — |
 | A fourth gate question (`names_its_task`), a structured `fits` question, `fitsThreshold` 0.5 and the model pinned to `jev-1.14.0`, all measured with `evals/run.ts` (see `evals/README.md`). | Cookbook uses three gate nouls, `fits` 0.30 and `jev-latest` |
 

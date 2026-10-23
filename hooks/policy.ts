@@ -716,6 +716,25 @@ export function passesGate(wide: Wide, config: PolicyConfig): boolean {
   return wide.gate === null || wide.gate >= config.gateThreshold
 }
 
+/** Under this `names_its_task`, the message leans on earlier turns for its task. */
+export const VAGUE_TASK = 0.3
+/** The `fits` such a message needs before anything is suggested. */
+export const VAGUE_FITS = 0.8
+
+/**
+ * The best `fits` a shortlist needs. A follow-up such as "都幫我修改完成"
+ * draws a skill that half fits (0.64–0.73 in `evals/`) and still passes the
+ * gate on its other questions, while a real task in few words, a bug to chase
+ * or a pasted log, comes back 0.88 or higher. With no `names_its_task` answer
+ * (no gate asked, as for `find_skill`, or the built-in classifier) the usual
+ * threshold stands.
+ */
+export function fitsBar(wide: Wide, config: PolicyConfig): number {
+  const named = wide.gateValues.names_its_task
+  if (named === undefined || named >= VAGUE_TASK) return config.fitsThreshold
+  return Math.max(config.fitsThreshold, VAGUE_FITS)
+}
+
 export interface Suggestion {
   /** The one skill to suggest, or null for "nothing here applies". */
   name: string | null
@@ -756,8 +775,9 @@ export function decide(
   if (rerank) {
     const values = Object.values(rerank.fits)
     const best = values.length > 0 ? Math.max(...values) : null
-    if (best !== null && best < config.fitsThreshold) {
-      return { name: null, reason: `nothing fits, best ${best.toFixed(2)} < ${config.fitsThreshold}` }
+    const bar = fitsBar(wide, config)
+    if (best !== null && best < bar) {
+      return { name: null, reason: `nothing fits, best ${best.toFixed(2)} < ${bar}` }
     }
     if (shortlist.some((skill) => skill.name === rerank.winner)) {
       const fit = rerank.fits[rerank.winner]

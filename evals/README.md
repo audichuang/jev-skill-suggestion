@@ -38,6 +38,21 @@ One change at a time, each kept only if it did not score worse.
 | A project's 6 real turns (kept outside the repo), without `recent_context` | 3 of 6 | 2 | 0 | 1 |
 | Same 6, with it | 4 of 6 | 1 | 0 | 1 |
 
+## Results, 2026-10-23: a closer fit for messages that lean on earlier turns
+
+0.7.0: when `names_its_task` is under 0.3, the best `fits` must reach 0.8 (`fitsBar` in `policy.ts`). The six "suggested, none wanted" left were all follow-ups ("都幫我修改完成", "好幫我完成優化吧") with `names_its_task` 0.09–0.23 and `fits` 0.64–0.73, while short real tasks under the same `names_its_task` (a bug hunt, a pasted log) came back `fits` 0.88 or higher. The project sets are `~/.claude/jev-skill-suggestion/evals/cat.jsonl` and `cat-batch.jsonl`, run with `--project`, and were not looked at while choosing the numbers.
+
+| Run | Right | Wrong skill | Suggested, none wanted | Missed |
+|---|---|---|---|---|
+| 34 cases, before | 26 | 2 | 5 | 1 |
+| 34 cases, after | **31** | 0 | 0 | 3 |
+| Project 6, before / after | 2 → 3 | 3 → 1 | 0 → 0 | 1 → 2 |
+| Project batch 30, before / after | 23 → 21 | 2 → 2 | 1 → 1 | 4 → 6 |
+
+- Every pair of `names_its_task` 0.2–0.35 × `fits` 0.75–0.85 scored 31 on the 34; 0.3 is where wrong picks reached zero. Across all 70 cases: 51 → 55 right, wrong or unwanted picks 13 → 4, misses 6 → 11.
+- The cost is mid-`fits` picks on vague messages: "擬去 /agent-reach …" (the person had typed the command), and in the batch set a review at 0.58 and a `bfs-cloud-onprem` question at 0.54 whose `names_its_task` came back 0.20 though it stands on its own. A miss leaves the model the listing; a wrong pick attaches the wrong SKILL.md.
+- `find_skill` asks no gate questions, so it keeps `fitsThreshold`.
+
 - The `` `request` `` rewording, though the docs suggest naming fields, scored worse and was dropped.
 - `names_its_task` is what separated short follow-ups ("好幫我完成優化吧", 0.02–0.13) from tasks; the gate means of the two groups had overlapped almost entirely before it.
 - The threshold sweep (`--gate` 0.3–0.45 × `--fits` 0.3–0.7) put `fits` 0.7 at 28 right, but in a sparse band of this one set; 0.6 shipped in 0.5.0 and dropped a plain Excel request the first live hour, so 0.5.1 ships 0.5.
