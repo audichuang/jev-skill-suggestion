@@ -40,7 +40,7 @@ One change at a time, each kept only if it did not score worse.
 
 ## Results, 2026-10-23: a closer fit for messages that lean on earlier turns
 
-0.7.0: when `names_its_task` is under 0.3, the best `fits` must reach 0.8 (`fitsBar` in `policy.ts`). The six "suggested, none wanted" left were all follow-ups ("都幫我修改完成", "好幫我完成優化吧") with `names_its_task` 0.09–0.23 and `fits` 0.64–0.73, while short real tasks under the same `names_its_task` (a bug hunt, a pasted log) came back `fits` 0.88 or higher. The project sets are `~/.claude/jev-skill-suggestion/evals/cat.jsonl` and `cat-batch.jsonl`, run with `--project`. The plateau below was found on the 34; the final `names_its_task` cut (0.11–0.3 swept) was then chosen on all 70, so the project sets are not held out.
+0.7.0: when `names_its_task` is under 0.3, the best `fits` must reach 0.8 (`fitsBar` in `policy.ts`). The six "suggested, none wanted" left were all follow-ups ("都幫我修改完成", "好幫我完成優化吧") with `names_its_task` 0.09–0.23 and `fits` 0.64–0.73, while short real tasks under the same `names_its_task` (a bug hunt, a pasted log) came back `fits` 0.88 or higher. The two project sets live in `~/.claude/jev-skill-suggestion/evals/`, outside the repo, and run with `--project`. The plateau below was found on the 34; the final `names_its_task` cut (0.11–0.3 swept) was then chosen on all 70, so the project sets are not held out.
 
 | Run | Right | Wrong skill | Suggested, none wanted | Missed |
 |---|---|---|---|---|
