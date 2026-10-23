@@ -197,6 +197,20 @@ test('the rerank can flip the winner, and its fits nouls can reject the whole sh
   expect(decide(wide, stray, skills, config).name).toBeNull()
 })
 
+test('the rerank winner must itself clear the bar; a choice that disagrees with the fits abstains', () => {
+  const wide = readWide(wideAnswer('powerpoint', DECK, ACTION))
+  const disagree = readRerank(rerankAnswer('powerpoint', { powerpoint: 0.1, 'pptx-author': 0.9 }))
+  expect(decide(wide, disagree, skills, config)).toEqual({
+    name: null,
+    reason: 'winner powerpoint fits 0.10 < 0.3',
+  })
+  const unscored = readRerank(rerankAnswer('powerpoint', { 'pptx-author': 0.9 }))
+  expect(decide(wide, unscored, skills, config)).toEqual({
+    name: null,
+    reason: 'winner powerpoint has no fits',
+  })
+})
+
 test('a message that leans on earlier turns needs a closer fit before anything is suggested', () => {
   const followUp = (named?: number) => ({
     ranked: [{ name: 'powerpoint', probability: 0.9 }],

@@ -779,14 +779,20 @@ export function decide(
     if (best !== null && best < bar) {
       return { name: null, reason: `nothing fits, best ${best.toFixed(2)} < ${bar}` }
     }
-    if (shortlist.some((skill) => skill.name === rerank.winner)) {
-      const fit = rerank.fits[rerank.winner]
-      return {
-        name: rerank.winner,
-        reason: `rerank of ${shortlist.length}${fit === undefined ? '' : `, fits ${fit.toFixed(2)}`}`,
-      }
+    if (!shortlist.some((skill) => skill.name === rerank.winner)) {
+      return { name: null, reason: `rerank named ${rerank.winner}, not on the shortlist` }
     }
-    return { name: null, reason: `rerank named ${rerank.winner}, not on the shortlist` }
+    // The bar above only looks at the best fit on the list. When the named
+    // choice is not that one, the two answers disagree: abstain rather than
+    // trust either.
+    const fit = rerank.fits[rerank.winner]
+    if (fit === undefined || !Number.isFinite(fit)) {
+      return { name: null, reason: `winner ${rerank.winner} has no fits` }
+    }
+    if (fit < bar) {
+      return { name: null, reason: `winner ${rerank.winner} fits ${fit.toFixed(2)} < ${bar}` }
+    }
+    return { name: rerank.winner, reason: `rerank of ${shortlist.length}, fits ${fit.toFixed(2)}` }
   }
 
   const top = shortlist[0] as Skill
