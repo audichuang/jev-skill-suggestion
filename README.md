@@ -243,6 +243,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
 | A `find_skill` tool lets the model ask Jev mid-turn, so a sub-task that turns up after the prompt is not left to a guess from bare names. | — |
 | Every decision, with the request text and the ranking, is kept in a file per session (`recordDecisions`), so a wrong pick can be read back. | — |
 | The turn before the request (the previous user message and the end of the assistant's last reply) goes in `recent_context`, which upstream always sends empty (`sendRecentContext`). | — |
+| A prompt over 12,000 characters reaches Jev as its first 8,000 and last 4,000: a pasted log plus the catalog otherwise comes back 400 `max_tokens_exceeded`, and the person's own words sit after the paste. | — |
 | A fourth gate question (`names_its_task`), a structured `fits` question, `fitsThreshold` 0.5 and the model pinned to `jev-1.14.0`, all measured with `evals/run.ts` (see `evals/README.md`). | Cookbook uses three gate nouls, `fits` 0.30 and `jev-latest` |
 
 To see upstream's later changes: `gh api "repos/davila7/claude-code-templates/commits?path=cli-tool/components/mods/productivity/jev-skill-suggestion"`, then diff the new upstream copy against the `upstream-*` tag.

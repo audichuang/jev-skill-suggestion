@@ -513,6 +513,22 @@ export function recentContextOf(
   return { previous_user_message: user.slice(0, 400), assistant_reply: reply.slice(-600) }
 }
 
+/** How much of a long prompt the decision model reads: its opening, and its end. */
+export const REQUEST_HEAD_CHARS = 8_000
+export const REQUEST_TAIL_CHARS = 4_000
+
+/**
+ * The prompt as the decision model reads it. A pasted log of tens of
+ * kilobytes plus the catalog's descriptions overruns Jev's input, and the
+ * request comes back 400 `max_tokens_exceeded`, so nothing is suggested
+ * exactly when a skill is needed. The head says what was pasted and the tail
+ * holds the person's own words, which follow the paste, so the middle goes.
+ */
+export function requestText(prompt: string): string {
+  if (prompt.length <= REQUEST_HEAD_CHARS + REQUEST_TAIL_CHARS) return prompt
+  return `${prompt.slice(0, REQUEST_HEAD_CHARS)}\n…\n${prompt.slice(-REQUEST_TAIL_CHARS)}`
+}
+
 /** A request body. The Gateway carries the model in a header instead. */
 export function requestBody(
   provider: Provider,
@@ -521,7 +537,7 @@ export function requestBody(
   model: string,
   context: RecentContext | null = null,
 ): string {
-  const state = { request: prompt, recent_context: context ?? '' }
+  const state = { request: requestText(prompt), recent_context: context ?? '' }
   const body = provider === 'typesafe' ? { model, state, questions } : { state, questions }
   return JSON.stringify(body)
 }

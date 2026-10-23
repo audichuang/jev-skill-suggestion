@@ -9,7 +9,7 @@
       "name": "jev-skill-suggestion",
       "source": "./",
       "description": "TypeSafe Jev picks the one skill each prompt needs and injects its SKILL.md, while every skill stays loadable by name so skills can chain.",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "license": "MIT"
     }
   ]

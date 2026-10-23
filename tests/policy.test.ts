@@ -23,8 +23,11 @@ import {
   readWide,
   recentContextOf,
   rerankQuestions,
+  REQUEST_HEAD_CHARS,
+  REQUEST_TAIL_CHARS,
   requestBody,
   requestHeaders,
+  requestText,
   selectProvider,
   shortlistOf,
   skillFileCandidates,
@@ -296,6 +299,18 @@ test('the request carries the prompt as state and the model where each backend e
   expect(gateway.model).toBeUndefined()
   expect(requestHeaders('gateway', 'k', 'typesafe-ai/jev')['ai-model-id']).toBe('typesafe-ai/jev')
   expect(requestHeaders('typesafe', 'k', 'jev-latest').authorization).toBe('Bearer k')
+})
+
+test('a pasted log is cut to its opening and its end, so the request fits and keeps the ask', () => {
+  const ask = '幫我看看這是甚麼問題'
+  const prompt = `<pasted_content>\n${'[inv-bch-bfs] INFO CallBatchApiJob 排程啟動\n'.repeat(1_200)}</pasted_content>\n\n${ask}`
+  expect(prompt.length).toBeGreaterThan(40_000)
+  const request = JSON.parse(requestBody('typesafe', prompt, wideQuestions('typesafe', skills), 'jev-latest')).state.request
+  expect(request.length).toBeLessThan(REQUEST_HEAD_CHARS + REQUEST_TAIL_CHARS + 10)
+  expect(request.startsWith('<pasted_content>')).toBe(true)
+  expect(request.endsWith(ask)).toBe(true)
+  // A prompt within the budget goes through untouched.
+  expect(requestText('fix the tests')).toBe('fix the tests')
 })
 
 test('the Gateway request names the protocol version, without which it is refused', () => {
