@@ -89,13 +89,16 @@ for (const entry of skillDirs(`${config}/skills`)) add(entry, `${config}/skills/
 const installed = readFileSync(`${config}/plugins/installed_plugins.json`, 'utf8')
 for (const key of Object.keys(enabled).filter((key) => enabled[key] === true)) {
   const plugin = key.split('@')[0] as string
-  // A malformed entry skips that plugin, as the hook's `fileOf` does.
+  // A malformed install entry skips that plugin, as the hook's `fileOf` does;
+  // a broken SKILL.md still stops the run, so the catalog is never short.
+  let paths: string[] = []
   try {
-    for (const path of installPathsOf(installed, key)) {
-      const dir = `${path}/skills`
-      for (const entry of skillDirs(dir)) add(`${plugin}:${entry}`, `${dir}/${entry}/SKILL.md`)
-    }
+    paths = installPathsOf(installed, key)
   } catch {}
+  for (const path of paths) {
+    const dir = `${path}/skills`
+    for (const entry of skillDirs(dir)) add(`${plugin}:${entry}`, `${dir}/${entry}/SKILL.md`)
+  }
 }
 
 if (reverse) skills.reverse()
