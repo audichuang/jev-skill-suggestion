@@ -54,6 +54,12 @@ One change at a time, each kept only if it did not score worse.
 - `find_skill` asks no gate questions, so it keeps `fitsThreshold`.
 - `run.ts` drops `disable-model-invocation` skills before taking the shortlist; the mod takes the top three and then drops them, so a live shortlist can come out empty (0.7.1 then suggests nothing). "好幫我完成優化吧" is skill-creator at 0.71 here and no rerank at all live.
 
+## Tried and dropped, 2026-10-23: `fits` reading the SKILL.md excerpt
+
+The `fits` noul reads only the description; the `choice` beside it reads the description plus the first 700 characters of SKILL.md. Giving `fits` the same detail kept the 35 at 32 right, but the project sets fell from 3 + 21 to 2 + 19 right (misses 2 + 6 → 3 + 9), and the PR case it was meant to rescue went from 0.45 to 0.33. The opening of a SKILL.md is mostly setup, which reads as "does something else" to a yes/no about the request. Not kept.
+
+Kept the same day: the `choice`'s winner must clear the bar on its own `fits` (0.7.2). No case moved; it closes the path where the choice names one skill and a different one carries the best `fits`.
+
 - The `` `request` `` rewording, though the docs suggest naming fields, scored worse and was dropped.
 - `names_its_task` is what separated short follow-ups ("好幫我完成優化吧", 0.02–0.13) from tasks; the gate means of the two groups had overlapped almost entirely before it.
 - The threshold sweep (`--gate` 0.3–0.45 × `--fits` 0.3–0.7) put `fits` 0.7 at 28 right, but in a sparse band of this one set; 0.6 shipped in 0.5.0 and dropped a plain Excel request the first live hour, so 0.5.1 ships 0.5.
