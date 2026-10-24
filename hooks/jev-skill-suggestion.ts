@@ -722,9 +722,12 @@ export const register: Register = (on, options) => {
     return next(e)
   })
   on('session.compact', async ($, e, next) => {
-    // What the Skill tool loaded is attached again after a compaction; what the
-    // mod attached is not.
-    if (!e.agentId) injected.clear()
+    // The engine re-attaches what the Skill tool loaded only up to its first
+    // 5,000 tokens, so after a compaction a pick goes in whole again either way.
+    if (!e.agentId) {
+      injected.clear()
+      loadedByTool.clear()
+    }
     return next(e)
   })
 

@@ -231,8 +231,8 @@ test('a skill the Skill tool already loaded is named with how to load it, not at
   const fresh = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { ...files } })
   expect(blockOf(await fresh.ask('fix the failing tests'))).toContain('RUN THE TESTS')
 
-  // In the listing, so the Skill tool can load it: named, and still named after a
-  // compaction, since the engine re-attaches what the Skill tool loaded.
+  // In the listing, so the Skill tool can load it: named. After a compaction the
+  // engine keeps only the first 5,000 tokens of it, so the body goes in whole.
   const listed = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { ...files } })
   await listed.listing(LISTING)
   await listed.load('test-runner')
@@ -241,7 +241,7 @@ test('a skill the Skill tool already loaded is named with how to load it, not at
   expect(after).toContain('load it with the Skill tool (skill: "test-runner")')
   expect(after).not.toContain('RUN THE TESTS')
   await listed.compact()
-  expect(blockOf(await listed.ask('fix the failing tests'))).not.toContain('RUN THE TESTS')
+  expect(blockOf(await listed.ask('fix the failing tests'))).toContain('RUN THE TESTS')
 
   // Not in the listing (user-invocable-only, or no listing seen yet): the Skill tool
   // may refuse it, so the body goes in whole.
