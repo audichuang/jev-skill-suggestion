@@ -90,7 +90,8 @@ Kept the same day: the `choice`'s winner must clear the bar on its own `fits` (0
 
 | Run | Right | Wrong skill | Suggested, none wanted | Missed |
 |---|---|---|---|---|
-| 35 cases + one handwritten path-leading case, after | **35** of 36 | 0 | 2 | 2 |
+| The 38 cases (`--gate 0.3`, the runner default), before / after the fix | 35 → 35 | 0 → 0 | 1 → 1 | 2 → 2 |
+| Same, plus one handwritten path-leading case, after | **36** of 39 | 0 | 1 | 2 |
 | A project's 108 front-end cases (kept outside the repo), before / after | the one path-leading case: not routed → its skill | — | — | — |
 
-The follow-up bar (`VAGUE_FITS`, now sweepable with `--vague-fits`) at 0.65 / 0.7 / 0.75 / 0.8, on all four sets: the 35 scored 30 / 32 / 34 / 34 right; the project batch 30 stayed at 26; the project 6 went 1 / 1 / 2 / 2; the 108 front-end set picked its target skills identically at every value. Lowering the bar buys nothing and costs wrong picks, so 0.8 stays.
+The follow-up bar (`VAGUE_FITS`, now sweepable with `--vague-fits`) at 0.65 / 0.7 / 0.75 / 0.8, on all four sets at `--gate 0.2` (that machine's setting): the 35 scored 30 / 32 / 34 / 34 right; the project batch 30 stayed at 26; the project 6 went 1 / 1 / 2 / 2; the 108 front-end set picked its target skills identically at every value. Lowering the bar buys nothing and costs wrong picks, so 0.8 stays.
