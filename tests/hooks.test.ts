@@ -201,6 +201,16 @@ test('every decision and every load goes to the session record file, appended to
   expect(Object.keys(off.files)).toEqual([])
 })
 
+test('a prompt the pre-checks drop is recorded with why, so the record shows what was never asked', async () => {
+  const path = '/home/u/.claude/jev-skill-suggestion/decisions/s1.jsonl'
+  const { ask, files } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
+  await ask('/pr fix')
+  await ask('繼續')
+  const lines = (files[path] as string).trim().split('\n').map((line) => JSON.parse(line))
+  expect(lines[0]).toMatchObject({ source: 'prompt', text: '/pr fix', pick: null, reason: 'not routed: a typed /name' })
+  expect(lines[1]).toMatchObject({ source: 'prompt', text: '繼續', pick: null, reason: 'not routed: a reply with no task of its own' })
+})
+
 test('the turn before goes beside the request, and sendRecentContext off leaves it empty', async () => {
   const on = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
   await on.ask('fix them')

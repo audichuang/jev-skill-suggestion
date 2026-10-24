@@ -581,8 +581,11 @@ test('a prompt is routed unless it is empty, a typed /name, or a reply with no t
   expect(routable('')).toBe(false)
   expect(routable('  \n')).toBe(false)
   expect(routable('/pr fix')).toBe(false)
+  expect(routable('/plugin:skill-name')).toBe(false)
   expect(routable('繼續')).toBe(false)
   expect(routable('make a deck from this outline')).toBe(true)
+  expect(routable('/Users/me/app/src 你要參考源碼嗎')).toBe(true)
+  expect(routable('/tmp/out.log 這是什麼錯')).toBe(true)
 })
 
 test('with the rerank on and none read, the pick stands for nothing', () => {

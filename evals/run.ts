@@ -21,6 +21,7 @@ import {
   DEFAULT_BASE_URL,
   DEFAULT_EXCERPT_CHARS,
   DEFAULT_MODEL,
+  VAGUE_FITS,
   configDirOf,
   installPathsOf,
   readSkillSettings,
@@ -61,6 +62,7 @@ const policy: PolicyConfig = {
   shortlist: 3,
   gateThreshold: Number(arg('gate', '0.3')),
   fitsThreshold: Number(arg('fits', '0.5')),
+  vagueFits: Number(arg('vague-fits', String(VAGUE_FITS))),
 }
 
 // The catalog, named the way the engine names it.

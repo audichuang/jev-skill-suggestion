@@ -36,3 +36,4 @@
 {"text": "幫我寫這個 PR 的描述", "expect": ["pr"], "note": "handwritten"}
 {"text": "幫我開一個 PR，描述照我們的格式寫", "expect": ["pr"], "note": "handwritten: names its task, but names_its_task came back 0.14"}
 {"text": "把這個分支 push 上去", "expect": [null], "note": "handwritten: pr only writes the body"}
+{"text": "/Users/me/Downloads/sales-2026q3.xlsx 幫我把這份整理成每月趨勢圖表", "expect": ["document-skills:xlsx"], "note": "handwritten: opens with a path; routable() once read the leading / as a typed /name and asked nothing"}

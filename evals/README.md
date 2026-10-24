@@ -83,3 +83,14 @@ Kept the same day: the `choice`'s winner must clear the bar on its own `fits` (0
 - `VAGUE_TASK` 0.3 to 0.4 scored the same on the 38 and the batch; 0.3 kept, but it is the edge of that plateau, not its middle: the unwanted follow-ups with a mid `fits` (0.65–0.72) now come back at `names_its_task` 0.15–0.29, one at 0.29, so 0.25 lets one back in and 0.2 three. Check these first when the model changes.
 - Case by case on the 38, only two picks moved: the PR case, and a case that accepts either answer went from none to `research`.
 - The pointer-word version brought back five unwanted picks on the 38.
+
+## Results, 2026-10-24: prompts that open with a path, and the follow-up bar swept
+
+`routable()` read any prompt starting with `/` as a typed `/name`, so "/Users/me/app/src 你要參考源碼嗎" was never ranked. On one machine, 106 of 3,209 recent prompts (3.3%) opened with a path. None of the three sets had such a case, because they were built from the decision records, and a dropped prompt never reached the record. The fix reads a first word with no second `/` as a command; dropped prompts are now recorded with a `not routed:` reason, so the next set built from the records can see them.
+
+| Run | Right | Wrong skill | Suggested, none wanted | Missed |
+|---|---|---|---|---|
+| 35 cases + one handwritten path-leading case, after | **35** of 36 | 0 | 2 | 2 |
+| A project's 108 front-end cases (kept outside the repo), before / after | the one path-leading case: not routed → its skill | — | — | — |
+
+The follow-up bar (`VAGUE_FITS`, now sweepable with `--vague-fits`) at 0.65 / 0.7 / 0.75 / 0.8, on all four sets: the 35 scored 30 / 32 / 34 / 34 right; the project batch 30 stayed at 26; the project 6 went 1 / 1 / 2 / 2; the 108 front-end set picked its target skills identically at every value. Lowering the bar buys nothing and costs wrong picks, so 0.8 stays.

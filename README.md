@@ -239,6 +239,7 @@ With a key set, the prompt text and every candidate skill's name and one-line de
 | The rerank request gets its own budget, `rerankTimeoutMs`, default 2500 ms. | [#962](https://github.com/davila7/claude-code-templates/issues/962) |
 | Settings, skills, plugin records and the backup follow `CLAUDE_CONFIG_DIR`. | [#1042](https://github.com/davila7/claude-code-templates/pull/1042) |
 | Replies with no task of their own (`ok`, `2`, `繼續`) are not ranked. | [#1081](https://github.com/davila7/claude-code-templates/pull/1081) |
+| A prompt that opens with a path (`/Users/me/app 幫我看看`) is ranked; only a first word with no second `/` counts as a typed `/name`. Upstream skipped every prompt starting with `/`. Prompts the pre-checks drop are recorded too, with why, so a record shows what was never asked. | — |
 | Skills set to `off` are never injected. | — |
 | A `find_skill` tool lets the model ask Jev mid-turn, so a sub-task that turns up after the prompt is not left to a guess from bare names. | — |
 | Every decision, with the request text and the ranking, is kept in a file per session (`recordDecisions`), so a wrong pick can be read back. | — |

@@ -701,6 +701,8 @@ export interface PolicyConfig {
   gateThreshold: number
   /** The best `fits` under which the whole shortlist is dropped. */
   fitsThreshold: number
+  /** That bar for a prompt that does not name its task; `VAGUE_FITS` unless an eval sweeps it. */
+  vagueFits?: number
 }
 
 /** The shortlist the second request reads: the top of the ranking, by name. */
@@ -736,18 +738,24 @@ export const VAGUE_FITS = 0.8
 export function fitsBar(wide: Wide, config: PolicyConfig): number {
   const named = wide.gateValues.names_its_task
   if (named === undefined || named >= VAGUE_TASK) return config.fitsThreshold
-  return Math.max(config.fitsThreshold, VAGUE_FITS)
+  return Math.max(config.fitsThreshold, config.vagueFits ?? VAGUE_FITS)
 }
 
 /**
  * Whether a prompt gets a suggestion at all: not empty, not a typed `/name`
  * (which already names its skill), and not a reply like "繼續" that carries
- * no task of its own.
+ * no task of its own. A prompt that opens with a path ("/Users/me/app 幫我看看")
+ * is a task: its first word holds a second `/`, which no command name does.
  */
 export function routable(text: string): boolean {
   const trimmed = text.trim()
-  if (!trimmed || /^\/\S/.test(trimmed)) return false
+  if (!trimmed || typedCommand(trimmed)) return false
   return !contextFree(text)
+}
+
+/** Whether a prompt opens with a typed `/name`, as opposed to a path. */
+export function typedCommand(text: string): boolean {
+  return /^\/[^\s/]+(?:\s|$)/.test(text.trim())
 }
 
 /**

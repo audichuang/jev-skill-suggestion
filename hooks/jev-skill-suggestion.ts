@@ -96,6 +96,7 @@ import {
   contextFree,
   rerankCandidates,
   routable,
+  typedCommand,
   decide,
   describeRerank,
   describeSetup,
@@ -645,6 +646,12 @@ export const register: Register = (on, options) => {
       if (logDecisions && e.text.trim() && contextFree(e.text)) {
         $.ui.log('[jev-skill-suggestion] no suggestion: a reply with no task of its own')
       }
+      // Recorded too: a record of routed prompts only cannot show what the
+      // pre-checks drop, and evals are built from these records.
+      if (e.text.trim()) {
+        const reason = typedCommand(e.text) ? 'not routed: a typed /name' : 'not routed: a reply with no task of its own'
+        await record($, state, { source: 'prompt', text: e.text, context: null, pick: null, reason, answered: true, trace: null })
+      }
       return next(e)
     }
 
@@ -652,7 +659,10 @@ export const register: Register = (on, options) => {
     // engine lists; "suggest" leaves loading to the Skill tool, which is.
     const context = await contextFor($, state, e.text)
     const choice = await choose($, state, e.text, { restrictTo: injectContent ? new Set() : listed, askGate: true, context })
-    if (!choice) return next(e)
+    if (!choice) {
+      await record($, state, { source: 'prompt', text: e.text, context, pick: null, reason: 'not asked: no backend or no skills', answered: false, trace: null })
+      return next(e)
+    }
     const { pick, file } = choice
     await record($, state, { source: 'prompt', text: e.text, context, pick: pick?.name ?? null, reason: choice.reason, answered: choice.answered, trace: choice.trace })
     // A row in the transcript scrolls away; this line stays on screen.
