@@ -356,20 +356,26 @@ export function dirOf(path: string): string {
  * rendered them, with the paths the engine substitutes. The Skill tool is
  * not needed, so the model is told not to load it a second time. A skill already injected earlier in
  * the session is only named again: the engine does the same on a byte-identical
- * re-invocation.
+ * re-invocation. One the Skill tool loaded (`'loaded'`) is named with the way to
+ * load it: `skill.prompt` cannot tell the main conversation from a subagent, so
+ * its body may be in this conversation or only in a subagent's.
  */
 export function injectionBlock(
   suggested: Skill,
   markdown: string | null,
   path: string | null,
   projectDir: string,
-  alreadyLoaded: boolean,
+  alreadyLoaded: boolean | 'loaded',
 ): string {
   const lines = [
     '<skill_relevance>',
     `Relevant to the current request: ${suggested.name}. Ignore this if it does not fit what the user actually asked for.`,
   ]
-  if (alreadyLoaded) {
+  if (alreadyLoaded === 'loaded') {
+    lines.push(
+      `Skill /${suggested.name} was loaded with the Skill tool earlier in this session. If its instructions are not in this conversation (a subagent loaded it), load it with the Skill tool (skill: "${suggested.name}").`,
+    )
+  } else if (alreadyLoaded) {
     lines.push(`Skill /${suggested.name} is already loaded above; instructions unchanged.`)
   } else if (markdown && path) {
     const dir = dirOf(path)

@@ -553,6 +553,9 @@ export const register: Register = (on, options) => {
   // The skills whose instructions were already attached this session: a
   // second time, the block only names the skill again.
   const injected = new Set<string>()
+  // The skills the Skill tool loaded this session, in this conversation or a
+  // subagent's (`skill.prompt` does not say which): named, not attached whole.
+  const loadedByTool = new Set<string>()
   // Said once, the first time a hook runs. A mod that loaded and one that
   // never loaded are otherwise told apart only by the absence of later lines,
   // and absence is not evidence: with the listing gone, silence is the norm.
@@ -679,17 +682,20 @@ export const register: Register = (on, options) => {
     let block: string | null
     if (injectContent && pick) {
       const projectDir = await $.session.cwd()
-      block = injectionBlock(pick, file?.markdown ?? null, file?.path ?? null, projectDir, injected.has(pick.name))
+      const already = injected.has(pick.name) ? true : loadedByTool.has(pick.name) ? 'loaded' : false
+      block = injectionBlock(pick, file?.markdown ?? null, file?.path ?? null, projectDir, already)
       if (logDecisions) {
         $.ui.log(
           file
-            ? injected.has(pick.name)
+            ? already === 'loaded'
+              ? `[jev-skill-suggestion] /${pick.name} loaded by the Skill tool this session; named with how to load it`
+              : already
               ? `[jev-skill-suggestion] /${pick.name} already injected this session; named again`
               : `[jev-skill-suggestion] injected /${pick.name} from ${file.path} (${file.markdown.length} characters)`
             : `[jev-skill-suggestion] no file found for /${pick.name}; suggested by name only`,
         )
       }
-      if (file) injected.add(pick.name)
+      if (file && !already) injected.add(pick.name)
     } else if (injectContent) {
       // Content mode with nothing picked says nothing: "no skill is relevant"
       // would talk the model out of loading one from the listing on its own.
@@ -708,11 +714,15 @@ export const register: Register = (on, options) => {
   // summarize the block away. Either way the next pick goes in whole again.
   on('session.end', async ($, e, next) => {
     injected.clear()
+    loadedByTool.clear()
     suggested = null
     return next(e)
   })
   on('session.compact', async ($, e, next) => {
-    if (!e.agentId) injected.clear()
+    if (!e.agentId) {
+      injected.clear()
+      loadedByTool.clear()
+    }
     return next(e)
   })
 
@@ -838,7 +848,10 @@ export const register: Register = (on, options) => {
             : 'nothing was suggested'
       $.ui.log(`[jev-skill-suggestion] skill /${e.skill} loaded (${how})`)
     }
-    if (e.skill !== SETUP_COMMAND) await record($, state, { loaded: e.skill, suggested })
+    if (e.skill !== SETUP_COMMAND) {
+      loadedByTool.add(e.skill)
+      await record($, state, { loaded: e.skill, suggested })
+    }
     return next(e)
   })
 }
