@@ -663,7 +663,7 @@ export const register: Register = (on, options) => {
     const context = await contextFor($, state, e.text)
     const choice = await choose($, state, e.text, { restrictTo: injectContent ? new Set() : listed, askGate: true, context })
     if (!choice) {
-      await record($, state, { source: 'prompt', text: e.text, context, pick: null, reason: 'not asked: no backend or no skills', answered: false, trace: null })
+      await record($, state, { source: 'prompt', text: e.text, context, pick: null, reason: 'not asked: could not list the skills', answered: false, trace: null })
       return next(e)
     }
     const { pick, file } = choice
@@ -682,7 +682,10 @@ export const register: Register = (on, options) => {
     let block: string | null
     if (injectContent && pick) {
       const projectDir = await $.session.cwd()
-      const already = injected.has(pick.name) ? true : loadedByTool.has(pick.name) ? 'loaded' : false
+      // Named only when the Skill tool can load it here: a skill missing from the
+      // main conversation's listing (user-invocable-only, or no listing seen yet)
+      // may be refused, and a subagent's load left the body out of this conversation.
+      const already = injected.has(pick.name) ? true : loadedByTool.has(pick.name) && listed.has(pick.name) ? 'loaded' : false
       block = injectionBlock(pick, file?.markdown ?? null, file?.path ?? null, projectDir, already)
       if (logDecisions) {
         $.ui.log(
@@ -719,10 +722,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
   on('session.compact', async ($, e, next) => {
-    if (!e.agentId) {
-      injected.clear()
-      loadedByTool.clear()
-    }
+    // What the Skill tool loaded is attached again after a compaction; what the
+    // mod attached is not.
+    if (!e.agentId) injected.clear()
     return next(e)
   })
 

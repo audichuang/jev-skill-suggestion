@@ -84,7 +84,8 @@ function seat(
     )
   const load = (skill: string) =>
     (hooks['skill.prompt'] as Hook<'skill.prompt'>)($, { skill, text: '' } as unknown as SkillPromptInput, pass)
-  return { ask, auth, bodies, registered, start, describe, call, listing, load, files }
+  const compact = () => (hooks['session.compact'] as Hook<'session.compact'>)($, {} as never, pass)
+  return { ask, auth, bodies, registered, start, describe, call, listing, load, compact, files }
 }
 
 test('with no key option the key comes from TYPESAFE_API_KEY, and a bare go-ahead is never ranked', async () => {
@@ -225,15 +226,26 @@ test('the turn before goes beside the request, and sendRecentContext off leaves 
 
 test('a skill the Skill tool already loaded is named with how to load it, not attached whole again', async () => {
   const files = { '/home/u/.claude/skills/test-runner/SKILL.md': '---\nname: test-runner\n---\nRUN THE TESTS' }
-  const fresh = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { ...files } })
-  const first = await fresh.ask('fix the failing tests')
-  expect('context' in first && first.context?.join('\n')).toContain('RUN THE TESTS')
+  const blockOf = (e: unknown) => (e && typeof e === 'object' && 'context' in e ? ((e as { context?: string[] }).context?.join('\n') ?? '') : '')
 
-  const loaded = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { ...files } })
-  await loaded.load('test-runner')
-  const after = await loaded.ask('fix the failing tests')
-  const block = 'context' in after ? (after.context?.join('\n') ?? '') : ''
-  expect(block).toContain('was loaded with the Skill tool earlier in this session')
-  expect(block).toContain('load it with the Skill tool (skill: "test-runner")')
-  expect(block).not.toContain('RUN THE TESTS')
+  const fresh = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { ...files } })
+  expect(blockOf(await fresh.ask('fix the failing tests'))).toContain('RUN THE TESTS')
+
+  // In the listing, so the Skill tool can load it: named, and still named after a
+  // compaction, since the engine re-attaches what the Skill tool loaded.
+  const listed = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { ...files } })
+  await listed.listing(LISTING)
+  await listed.load('test-runner')
+  const after = blockOf(await listed.ask('fix the failing tests'))
+  expect(after).toContain('was loaded with the Skill tool earlier in this session')
+  expect(after).toContain('load it with the Skill tool (skill: "test-runner")')
+  expect(after).not.toContain('RUN THE TESTS')
+  await listed.compact()
+  expect(blockOf(await listed.ask('fix the failing tests'))).not.toContain('RUN THE TESTS')
+
+  // Not in the listing (user-invocable-only, or no listing seen yet): the Skill tool
+  // may refuse it, so the body goes in whole.
+  const unlisted = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { ...files } })
+  await unlisted.load('test-runner')
+  expect(blockOf(await unlisted.ask('fix the failing tests'))).toContain('RUN THE TESTS')
 })
