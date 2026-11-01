@@ -18,7 +18,7 @@ Claude Code has a gentler state: `"name-only"` in `skillOverrides` keeps the ski
 
 ## Install
 
-Requires Claude Code 2.1.287 or newer (mods load by default from there). The `find_skill` tool was verified on 2.1.299.
+Requires Claude Code 2.1.287 or newer (mods load by default from there).
 
 **From the marketplace** (any machine):
 
@@ -81,12 +81,11 @@ Send a prompt in any project. The transcript should show:
 |---|---|
 | `prompt.submit` | Runs the two requests below on the prompt you sent. It attaches the winner, if any, as a `<skill_relevance>` block the model reads and you never see. With `inject: "content"` (the default) the block holds the skill's `SKILL.md`; with `inject: "suggest"` it holds only the name, and the model loads the skill itself. |
 | `prompt.attachment` on `skill_listing` | Leaves the listing alone by default. With `hideListing: true` it withholds the listing, or trims it to the names in `alwaysListed`. |
-| `session.start`, `tool.describe`, `tool.call` | The `find_skill` tool (see below): registered when the session starts, kept out of ToolSearch so the model sees its description from the first request, and answered with the same two requests. |
 | `skill.prompt` | Logs whether a skill the model loaded was the suggested one, and writes the prompt of `/jev-skill-suggestion:setup`. |
 
-**When it decides.** Once per prompt you send, from that prompt's text alone. A long turn can run into sub-tasks the prompt never named, and with `name-only` the model sees those skills by name only. For that, the mod gives the model a `find_skill` tool. The model calls it with the sub-task in one sentence, and Jev answers with at most one skill: its name and the description the listing leaves out. The model then loads it with the Skill tool, or ignores it. Nothing is pushed mid-turn. A skill that hands off to another skill works as it does without the mod.
+**When it decides.** Once per prompt you send, from that prompt's text and the turn before it. Nothing is pushed mid-turn: a sub-task the prompt never named is left to the model, which sees every skill in the listing. A skill that hands off to another skill works as it does without the mod.
 
-`find_skill` offers only skills the main conversation's listing names, because the Skill tool loads only those. It leaves out the gate questions a prompt must pass: a model that calls `find_skill` has already decided it wants a skill, and one sub-task sentence without its conversation scores low on them. The rerank's `fits` check is then the only check, so a pick the rerank never read is not answered, and the tool is offered only with a TypeSafe or Gateway key and `rerank` on. When a request fails or times out, it says the lookup is unavailable rather than "no skill fits". It answers a name and never a SKILL.md: a skill loaded with the Skill tool is attached again after a compaction, and one attached by the mod is not. `findSkill: false` turns the tool off. The tool's description and schema cost about 160 tokens in every session.
+**When you name it.** A `/name` past the first word (`修好再跑 /code-review`) names that skill to the model with no request to any model, and the model loads it with the Skill tool unless you were only talking about it. A `/name` inside a path or file name, or inside a `<pasted_content>` block, does not count, and neither does a skill you turned `off`, one in `neverSuggested`, or one that disables model invocation.
 
 **What it attaches:**
 
@@ -100,20 +99,19 @@ Its instructions follow: follow them now, including any setup steps. Do not load
 </skill_relevance>
 ```
 
-A skill already injected is only named again on later prompts, until `/clear`, a resume or a compaction. When nothing is picked, nothing is attached, so the model is free to load a skill from the listing.
+Some picks are named with how to load them, not attached: a skill you named yourself, a SKILL.md over 10,000 characters, and one using `$ARGUMENTS`, `` !`command` `` or `allowed-tools`, which only the Skill tool honours. A skill already injected is only named again on later prompts, until `/clear`, a resume or a compaction. When nothing is picked, nothing is attached, so the model is free to load a skill from the listing.
 
 **Candidates.** Every skill `$.command.list()` reports, except built-ins, names in `neverSuggested`, and skills set to `off` in your user settings. A skill whose frontmatter says `disable-model-invocation: true` is never picked.
 
 **Known limits.**
-- An injected skill skips what the Skill tool does: the skill's `allowed-tools` are not applied.
 - The mod cannot see which skills the model loaded itself, so a skill the model already loaded can be injected a second time later.
-- TypeSafe's choice question takes at most 255 options, so a roster larger than that gets HTTP 400 ([upstream #965](https://github.com/davila7/claude-code-templates/issues/965)).
+- TypeSafe's choice question takes at most 255 options, and `none` is one of them, so a roster of 255 or more gets HTTP 400 ([upstream #965](https://github.com/davila7/claude-code-templates/issues/965)).
 
 ## How it decides
 
 Two requests, in the cookbook's shape. Each may come back empty-handed.
 
-**Request 1 — skim every skill.** One `choice` (`which`) over every candidate, with its one-line description as the criterion; its probability distribution is the ranking. Beside it, four `noul`s about the *request*, not about any skill:
+**Request 1 — skim every skill.** One `choice` (`which`) over every candidate, with its one-line description as the criterion, plus a `none` option; its probability distribution is the ranking, and when `none` comes first nothing is suggested and no second request goes out. Beside it, four `noul`s about the *request*, not about any skill:
 
 | noul | asks |
 |---|---|
@@ -122,9 +120,9 @@ Two requests, in the cookbook's shape. Each may come back empty-handed.
 | `prose_suffices` | Could a knowledgeable generalist fully satisfy this in prose, with no tools and no access to the user's files? (counts the other way round) |
 | `names_its_task` | Could someone start on this message without having read the conversation before it? Mentions of the user's own files, branch, project or conventions are fine; only references to earlier messages are not. |
 
-Their mean is the gate: under `gateThreshold` (0.30) nothing is suggested, whatever the ranking said. Questions about subject matter would not do this job — *explain what a monad is* and a task that needs a skill are both software. `names_its_task` is this fork's: Jev reads the prompt alone, and a follow-up such as "好幫我完成優化吧" carries its task in earlier turns, so without it such replies were ranked as if they were tasks (see `evals/`).
+Their mean is the gate: under `gateThreshold` (0.20) nothing is suggested, whatever the ranking said. Questions about subject matter would not do this job — *explain what a monad is* and a task that needs a skill are both software. `names_its_task` is this fork's: Jev reads the prompt alone, and a follow-up such as "好幫我完成優化吧" carries its task in earlier turns, so without it such replies were ranked as if they were tasks (see `evals/`).
 
-**Request 2 — read the top three properly.** The same `choice` over the shortlist (`shortlist`, 3), now with each skill's full frontmatter description and the first `excerptChars` (700) of its SKILL.md as the criterion, and one `noul` per candidate — *does this skill do the specific thing the request asks for?* — answered on its own, so all of them can come back low. A shortlist whose best `fits` is under `fitsThreshold` (0.50) is dropped entirely, and when `names_its_task` came back under 0.3 the bar is 0.80; otherwise the `choice`'s winner is suggested, provided its own `fits` clears the same bar (a winner the `noul`s do not back is not suggested). The two decide different things: the `choice` settles *which*, the `noul`s settle *whether*.
+**Request 2 — read the top eight properly.** The same `choice` over the shortlist (`shortlist`, 8), now with each skill's full frontmatter description and the first `excerptChars` (700) of its SKILL.md as the criterion, and one `noul` per candidate — *given the request and the turn before it, is this skill the procedure to follow for what the user wants done next?* — answered on its own, so all of them can come back low. A shortlist whose best `fits` is under `fitsThreshold` (0.60) is dropped entirely, and when `names_its_task` came back under 0.3 the bar is 0.85; otherwise the `choice`'s winner is suggested, provided its own `fits` clears the same bar (a winner the `noul`s do not back is not suggested). The two decide different things: the `choice` settles *which*, the `noul`s settle *whether*.
 
 This is where lookalikes separate — on one line the skill that *edits* `.pptx` files reads nearly the same as the one that *authors* them; on 700 characters they do not.
 
@@ -158,7 +156,6 @@ With `logDecisions` on (the default), the mod reports every step of its own work
 - The two `jev:` lines are what the decision model replied to each request, before any policy is applied — the gate, the top of the ranking, then the rerank's winner and every `fits`, with how long each call took and how many SKILL.md bodies were found.
 - `injected /name from <file>` is the skill going in with the prompt; `already injected this session; named again` on a repeat.
 - `withheld the skill listing` appears only with `hideListing: true`: the listing hook firing, with what it cost the context and what it kept. While some listed skills still bring their whole description, the mod adds `N skills are still listed with a full description; run /jev-skill-suggestion:setup …` once per session.
-- `find_skill "<sub-task>": suggesting /name` (or `no suggestion`, or `lookup unavailable`) is the model calling `find_skill` mid-turn, after the same `jev:` lines.
 - `skill /name loaded` is the model calling the Skill tool on its own (`inject: "suggest"`, or a typed `/name`): `as suggested`, or which skill was suggested instead when it reached for another.
 
 It also keeps a one-line status on screen, replaced as it goes:
@@ -177,7 +174,7 @@ The transcript lines scroll away, and a headless run writes them only to its deb
 {"at":"2026-10-16T08:12:09.402Z","loaded":"drawio-skill","suggested":"drawio-skill"}
 ```
 
-`source` is `prompt` or `find_skill`; a `loaded` line is the model calling the Skill tool, with the pick it was made under. The file holds the request text as typed: it never leaves the machine, and is there so a wrong suggestion can be read back and turned into a test case. Set `recordDecisions: false` to keep nothing.
+`failure` says why a request gave no answer (`ranking timeout`, `rerank 503`), `catalog` is a hash of the skills offered, and `policy` is a short id of the questions and thresholds in force, so records from before and after a change are not scored as one. A `loaded` line is the model calling the Skill tool, with the pick it was made under. The file holds the request text as typed: it never leaves the machine, and is there so a wrong suggestion can be read back and turned into a test case. Set `recordDecisions: false` to keep nothing.
 
 To list every recorded decision, newest session files included:
 
@@ -194,9 +191,13 @@ cat ~/.claude/jev-skill-suggestion/decisions/*.jsonl | jq -c 'select(.source) | 
 A `ready on the built-in classifier, no key set` line when you did set a key means the key sits under the wrong `pluginConfigs` entry: the key must match the plugin's id, which depends on how it was loaded (see Options).
 
 
+## The injection trial
+
+The evals measure whether a pick is right, not whether it helped. With `injectTrial: true`, each session falls by its id into one of three arms, attach the skill, name it, or send nothing, and every decision records `inject` and `attachedChars`. A third of sessions then get no suggestion. Compare the arms after a week by how often the next prompt corrects the work and how many tools the turn used.
+
 ## Privacy
 
-With a key set, the prompt text and every candidate skill's name and one-line description leave the machine on the first request, and the first `excerptChars` of each shortlisted skill's SKILL.md on the second, to whichever backend the key belongs to. Nothing else. With no key set, nothing leaves the machine.
+With a key set, the prompt text and every candidate skill's name and one-line description leave the machine on the first request, and the first `excerptChars` of up to eight shortlisted skills' SKILL.md on the second, to whichever backend the key belongs to. Nothing else. With no key set, nothing leaves the machine.
 
 
 ## Options
@@ -212,15 +213,15 @@ With a key set, the prompt text and every candidate skill's name and one-line de
   inject:           string  "content" attaches the chosen SKILL.md (default); "suggest" names it for the Skill tool
   hideListing:      boolean withhold the engine's skill listing (default false)
   rerank:           boolean second request over the shortlist (default true)
-  shortlist:        number  how many of the ranking the second request re-reads (default 3)
-  gateThreshold:    number  gate mean under which nothing is suggested (default 0.3)
-  fitsThreshold:    number  best `fits` under which the shortlist is dropped (default 0.5)
+  shortlist:        number  how many of the ranking the second request re-reads (default 8)
+  gateThreshold:    number  gate mean under which nothing is suggested (default 0.2)
+  fitsThreshold:    number  best `fits` under which the shortlist is dropped (default 0.6)
   excerptChars:     number  SKILL.md characters each candidate brings (default 700)
   alwaysListed:     string  comma-separated names kept when hideListing is on
   neverSuggested:   string  comma-separated names never offered to the decision model
-  timeoutMs:        number  latency budget for the ranking request (default 800)
+  timeoutMs:        number  latency budget for the ranking request (default 1000)
   rerankTimeoutMs:  number  latency budget for the rerank request (default 2500)
-  findSkill:        boolean give the model the find_skill tool for mid-turn sub-tasks (default true; needs a key and rerank on)
+  injectTrial:      boolean split sessions into attach, name and nothing, and record which (default false)
   logDecisions:     boolean log each decision (default true)
   recordDecisions:  boolean keep every decision in a file per session (default true)
   sendRecentContext: boolean send the previous user message and the end of the last reply with the request (default true)
@@ -242,15 +243,16 @@ With a key set, the prompt text and every candidate skill's name and one-line de
 | A prompt that opens with a path (`/Users/me/app 幫我看看`) is ranked; only a first word with no second `/` counts as a typed `/name`. Upstream skipped every prompt starting with `/`. Prompts dropped as a typed `/name` or a reply with no task are recorded too, with why, so a record shows what was never asked. | — |
 | A skill the Skill tool already loaded this session is named again with how to load it, not attached whole a second time. `skill.prompt` cannot tell a subagent's load from the main conversation's, so the model is told to load it itself if the instructions are not in its conversation; a skill missing from the main listing, which the Skill tool may refuse, still goes in whole. | — |
 | Skills set to `off` are never injected. | — |
-| A `find_skill` tool lets the model ask Jev mid-turn, so a sub-task that turns up after the prompt is not left to a guess from bare names. | — |
+| A `/name` past the first word attaches that skill with no model asked. | — |
+| The ranking has a `none` option; when it comes first, nothing is suggested. Upstream's cookbook has none. | — |
 | Every decision, with the request text and the ranking, is kept in a file per session (`recordDecisions`), so a wrong pick can be read back. | — |
 | The turn before the request (the previous user message and the end of the assistant's last reply) goes in `recent_context`, which upstream always sends empty (`sendRecentContext`). | — |
-| A message whose `names_its_task` is under 0.3, a follow-up that leans on earlier turns, needs a best `fits` of 0.8 rather than `fitsThreshold`: such replies drew a half-fitting skill (see `evals/README.md`). With `rerank: false` there is no `fits`, so this bar does not apply. | — |
+| A message whose `names_its_task` is under 0.3, a follow-up that leans on earlier turns, needs a best `fits` of 0.85 rather than `fitsThreshold`: such replies drew a half-fitting skill (see `evals/README.md`). With `rerank: false` there is no `fits`, so this bar does not apply. | — |
 | The rerank's winner must clear the bar on its own `fits`; upstream checks only the best `fits` on the shortlist, so a winner at 0.10 beside another at 0.90 was suggested. | — |
 | With `rerank` on, a pick the rerank never read (every shortlisted skill has `disable-model-invocation`) is not suggested; upstream suggested the ranking's next skill. | — |
 | A 200 whose JSON root is not an object (`null`) gives no suggestion; upstream threw inside the prompt hook. | — |
 | A prompt over 12,000 characters reaches Jev as its first 8,000 and last 4,000: a pasted log plus the catalog otherwise comes back 400 `max_tokens_exceeded`, and the person's own words sit after the paste. | — |
-| A fourth gate question (`names_its_task`), a structured `fits` question, `fitsThreshold` 0.5 and the model pinned to `jev-1.14.0`, all measured with `evals/run.ts` (see `evals/README.md`). | Cookbook uses three gate nouls, `fits` 0.30 and `jev-latest` |
+| A fourth gate question (`names_its_task`), a structured `fits` question that reads the turn before, a shortlist of 8, `fitsThreshold` 0.6 and the model pinned to `jev-1.14.0`, all measured with `evals/run.ts` (see `evals/README.md`). | Cookbook uses three gate nouls, `fits` 0.30 and `jev-latest` |
 
 To see upstream's later changes: `gh api "repos/davila7/claude-code-templates/commits?path=cli-tool/components/mods/productivity/jev-skill-suggestion"`, then diff the new upstream copy against the `upstream-*` tag.
 
