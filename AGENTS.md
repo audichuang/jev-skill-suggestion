@@ -10,6 +10,10 @@ Claude Code mod（hooks module plugin），fork 自 davila7/claude-code-template
 - 每次判斷會寫進 `~/.claude/jev-skill-suggestion/decisions/<session id>.jsonl`，比對行為時讀這個檔比翻 debug log 準。
 - 改到問 Jev 的問題、門檻或模型，前後都跑 `bun evals/run.ts`（用法見 `evals/README.md`），分數沒變好就不留，結果記進 `evals/README.md`。照官方文件改的寫法實測也可能變差。
 - 只看總分會漏掉一題變好、一題變差互相抵消。號稱不改行為的重構要逐題比 pick：舊 commit 開 worktree，`evals/.cache` 用 symlink 共用，兩邊各跑一次再 diff。兩組專案題也要跑，它們才是沒拿來調門檻的題目。
+- 改問法或門檻時，也要跑線上題 `~/.claude/jev-skill-suggestion/evals/live-*.jsonl`（`--cases`）。手寫題高分不代表線上準：手寫題 92% 對時，線上精準度只有 65–67%。
+- 從實際對話標題目要兩位盲標（一寬一嚴），分數同時報只看嚴格標註的。單一標註者標的漏推，嚴格標註者只同意一半。
+- 比較線上紀錄的改版前後，用 `policy` 欄分組，不用日期切。
+- 重提分群、追問改寫、差異摘錄、專案先驗前，先看 `evals/README.md` 的實測；文獻說有效不算數，追問改寫實測就變差。
 - 一題的 `expect` 同時接受 `null` 和某個 skill 時，在 `note` 寫明為什麼兩個都對；不然它就抓不到那個 skill 又被推出來。
 - 這個 repo 是公開的。從某個專案的對話取出的題目和紀錄（含它的表名、SQL、帳號、專案自己的 skill 名稱，`evals/README.md` 的文字也算）只能放在 `~/.claude/jev-skill-suggestion/evals/`，用 `--cases` 傳入，不進 repo。
 
@@ -35,6 +39,7 @@ Claude Code mod（hooks module plugin），fork 自 davila7/claude-code-template
 - options 只從 user、`--settings`、managed 三種 settings 讀，不讀專案 settings。
 - `$` 只能傳給檔案頂層宣告的函式（function declaration 或綁定函式的 const）。傳給 `register()` 裡的閉包，validator 會擋。要共用的流程寫成頂層函式，狀態用參數傳進去，照 `choose($, state, …)` 的寫法。
 - `$.tool.register` 註冊的工具，參數直接攤在 `tool.call` 事件的頂層（`e.task`），沒有 `e.input`。完整名稱要用 `register()` 回傳的 `tool`，名稱會隨載入來源不同。
+- 測試檔不能 `await import()`，`claude plugin test` 會回報 `the file did not load`，一律在檔頭 import。
 - plugin 註冊的工具預設 `isDeferred: true`，會被放到 ToolSearch 後面，模型只看得到名字。要在 `tool.describe` 回傳 `isDeferred: false` 才會一開始就帶 schema 和描述。
 
 ## 上游與發版
