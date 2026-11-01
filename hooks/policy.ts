@@ -331,13 +331,6 @@ export function detailOf(skill: Skill, markdown: string | null, excerptChars: nu
   return description ? `${description} — ${excerpt}` : excerpt
 }
 
-/**
- * Whether a skill's own frontmatter lets the model invoke it. A skill with
- * `disable-model-invocation: true` is left out of the engine's listing and
- * refused by the Skill tool, so it must never be suggested; before the
- * listing has been seen, this is the only way to tell. No file, or no such
- * field, reads as invocable.
- */
 /** A skill's body with its frontmatter taken off. */
 export function bodyOf(markdown: string): string {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(markdown)
@@ -352,8 +345,8 @@ export function dirOf(path: string): string {
 
 /**
  * The block attached to the prompt when the mod loads the skill itself: the
- * cookbook's line, then the skill's instructions as the engine would have
- * rendered them, with the paths the engine substitutes. The Skill tool is
+ * cookbook's line, then the skill's instructions with the two paths substituted;
+ * `attachable` says which skills that is faithful for. The Skill tool is
  * not needed, so the model is told not to load it a second time. A skill already injected earlier in
  * the session is only named again: the engine does the same on a byte-identical
  * re-invocation. One the Skill tool loaded (`'loaded'`) is named with the way to
@@ -401,6 +394,29 @@ export function injectionBlock(
   return lines.join('\n')
 }
 
+/** A SKILL.md longer than this is named with how to load it, not attached whole. */
+export const MAX_ATTACHED_CHARS = 10_000
+
+/**
+ * Whether a SKILL.md can go in as text and still mean what it says. Only the
+ * Skill tool fills in `$ARGUMENTS`, runs `` !`command` `` and applies
+ * `allowed-tools`. A long one is left to the Skill tool too: a wrong pick
+ * should not cost that much, and what the tool loads survives a compaction.
+ */
+export function attachable(markdown: string): boolean {
+  if (markdown.length > MAX_ATTACHED_CHARS) return false
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)
+  if (frontmatter && /^allowed-tools:/m.test(frontmatter[1] as string)) return false
+  return !/\$ARGUMENTS|\$\{ARGUMENTS\}|!`/.test(bodyOf(markdown))
+}
+
+/**
+ * Whether a skill's own frontmatter lets the model invoke it. A skill with
+ * `disable-model-invocation: true` is left out of the engine's listing and
+ * refused by the Skill tool, so it must never be suggested; before the
+ * listing has been seen, this is the only way to tell. No file, or no such
+ * field, reads as invocable.
+ */
 export function modelInvocable(markdown: string | null): boolean {
   if (!markdown) return true
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)
@@ -433,13 +449,14 @@ function yesNo(provider: Provider, instructions: string | Record<string, unknown
   return { type: provider === 'typesafe' ? 'noul' : 'boolean', instructions }
 }
 
-/** The first request's `questions`: the ranking, and the gate unless `askGate` is off. */
-export function wideQuestions(
-  provider: Provider,
-  skills: readonly Skill[],
-  { askGate = true }: { askGate?: boolean } = {},
-): Record<string, unknown> {
-  const criteria: Record<string, string> = {}
+/** What the ranking's own way out reads; see `abstained`. */
+const NONE_CRITERION =
+  'No skill is needed: an ongoing follow-up, a question answered from general understanding, or a task none of these covers. ' +
+  'Examples: "好幫我完成吧", "那就照你說的改", "為什麼會這樣？", "這樣對嗎", "再看一下有沒有問題", "ok do that", "測試過了嗎", "先這樣就好", "你覺得哪個好", "幫我繼續修".'
+
+/** The first request's `questions`: the ranking and the gate. */
+export function wideQuestions(provider: Provider, skills: readonly Skill[]): Record<string, unknown> {
+  const criteria: Record<string, string> = { [NONE]: NONE_CRITERION }
   for (const skill of skills) criteria[skill.name] = skill.description || `A skill named ${skill.name}.`
   const questions: Record<string, unknown> = {
     which: {
@@ -449,7 +466,6 @@ export function wideQuestions(
       criteria,
     },
   }
-  if (!askGate) return questions
   for (const [key, text] of Object.entries(GATE_QUESTIONS)) {
     questions[`gate::${key}`] = yesNo(provider, text)
   }
@@ -464,9 +480,9 @@ export function wideQuestions(
 function fitsInstructions(provider: Provider, candidate: Candidate): string | Record<string, unknown> {
   const description = candidate.description || candidate.detail
   if (provider === 'gateway') {
-    return `Does the skill '${candidate.name}' do the specific thing the user's request asks for? It is described as: ${description}`
+    return `Given the request and recent_context, is the skill '${candidate.name}' the procedure to follow for what the user wants done next? It is described as: ${description}`
   }
-  return { question: 'Does `skill` do the specific thing the request asks for?', skill: { name: candidate.name, description } }
+  return { question: 'Given the request and recent_context, is `skill` the procedure to follow for what the user wants done next?', skill: { name: candidate.name, description } }
 }
 
 /** The second request's `questions`: the shortlist re-read, one `fits` each. */
@@ -500,24 +516,27 @@ export interface RecentContext {
  * The turn before `current` in a transcript: the last user message before it
  * and the assistant's last reply, each cut short, or null when there is none.
  * A follow-up such as "查無資料ㄟ 為什麼？？" carries its task in that turn, and
- * the decision model otherwise reads the request alone. Mid-turn (find_skill),
- * `current` is null: the context is the prompt being worked on and the reply
- * so far.
+ * the decision model otherwise reads the request alone.
  */
 export function recentContextOf(
   messages: readonly { role: 'user' | 'assistant'; text: string }[],
-  current: string | null,
+  current: string,
 ): RecentContext | null {
   const said = messages.filter((message) => message.text.trim())
   // The prompt being decided may already be in the transcript.
   const last = said.at(-1)
-  if (current !== null && last?.role === 'user' && last.text.trim() === current.trim()) said.pop()
+  if (last?.role === 'user' && last.text.trim() === current.trim()) said.pop()
   const at = said.findLastIndex((message) => message.role === 'user')
   const user = at < 0 ? '' : (said[at] as { text: string }).text.trim()
   const reply = said.slice(at + 1).findLast((message) => message.role === 'assistant')?.text.trim() ?? ''
   if (!user && !reply) return null
   return { previous_user_message: user.slice(0, 400), assistant_reply: reply.slice(-600) }
 }
+
+/** How many of the ranking the second request re-reads, unless `shortlist` says otherwise. */
+export const DEFAULT_SHORTLIST = 8
+/** The best `fits` a shortlist needs, unless `fitsThreshold` says otherwise. */
+export const DEFAULT_FITS_THRESHOLD = 0.6
 
 /** How much of a skill's body the second request reads, unless `excerptChars` says otherwise. */
 export const DEFAULT_EXCERPT_CHARS = 700
@@ -723,23 +742,27 @@ export function shortlistOf(wide: Wide, skills: readonly Skill[], count: number)
   return picked
 }
 
+/** Whether the ranking's first choice was to load no skill at all (`evals/README.md`). */
+export function abstained(wide: Wide): boolean {
+  return wide.ranked[0]?.name === NONE
+}
+
 /** Whether the first request's answer is worth a second look at all. */
 export function passesGate(wide: Wide, config: PolicyConfig): boolean {
-  return wide.gate === null || wide.gate >= config.gateThreshold
+  return !abstained(wide) && (wide.gate === null || wide.gate >= config.gateThreshold)
 }
 
 /** Under this `names_its_task`, the message leans on earlier turns for its task. */
 export const VAGUE_TASK = 0.3
 /** The `fits` such a message needs before anything is suggested. */
-export const VAGUE_FITS = 0.8
+export const VAGUE_FITS = 0.85
 
 /**
  * The best `fits` a shortlist needs. A follow-up such as "都幫我修改完成"
- * draws a skill that half fits (0.64–0.73 in `evals/`) and still passes the
- * gate on its other questions, while a real task in few words, a bug to chase
- * or a pasted log, comes back 0.88 or higher. With no `names_its_task` answer
- * (no gate asked, as for `find_skill`, or the built-in classifier) the usual
- * threshold stands.
+ * draws a skill that half fits and still passes the gate on its other
+ * questions, so it needs a closer fit than a message that names its task
+ * (`evals/README.md`). With no `names_its_task` answer (the built-in
+ * classifier) the usual threshold stands.
  */
 export function fitsBar(wide: Wide, config: PolicyConfig): number {
   const named = wide.gateValues.names_its_task
@@ -762,6 +785,29 @@ export function routable(text: string): boolean {
 /** Whether a prompt opens with a typed `/name`, as opposed to a path. */
 export function typedCommand(text: string): boolean {
   return /^\/[^\s/]+(?:\s|$)/.test(text.trim())
+}
+
+/**
+ * The skill a prompt names with a `/name` past its first word (a first-word
+ * `/name` is a typed command, which never gets here), or null. The person has
+ * already said which skill they want, so no model is asked. Text inside a
+ * `<pasted_content>` block is not the person's own. A `/name` that is part of a
+ * path or file name does not count. A plugin's `plugin:name` also matches as
+ * `/name` when only one skill goes by that short name. The first in the text wins.
+ */
+export function mentionedSkill(text: string, skills: readonly Skill[]): Skill | null {
+  const own = text.replace(/<pasted_content\b[\s\S]*?<\/pasted_content[^>]*>/g, ' ')
+  const byForm = new Map<string, Skill | null>()
+  for (const skill of skills) {
+    const short = skill.name.slice(skill.name.lastIndexOf(':') + 1)
+    if (short !== skill.name) byForm.set(short, byForm.has(short) ? null : skill)
+  }
+  for (const skill of skills) byForm.set(skill.name, skill)
+  for (const match of own.matchAll(/(?<![\w./~-])\/([\w:-]+)(?![\w/-]|\.\w)/g)) {
+    const skill = byForm.get(match[1] as string)
+    if (skill) return skill
+  }
+  return null
 }
 
 /**
@@ -821,6 +867,7 @@ export function decide(
   } = {},
 ): Suggestion {
   if (!wide) return { name: null, reason: 'no answer' }
+  if (abstained(wide)) return { name: null, reason: 'the ranking chose none' }
   if (!passesGate(wide, config)) {
     return {
       name: null,
@@ -896,24 +943,48 @@ export function suggestionBlock(suggested: Skill | null, hidden: boolean): strin
 }
 
 /**
- * The tool the model calls mid-turn, when a sub-task starts that the prompt's
- * own suggestion did not cover. Worded as facts, not orders: text that reads
- * like a command can trip the model's prompt-injection defences.
+ * A short id of the questions and thresholds in force, kept with every decision
+ * so records from before and after a change are not scored as one. The model
+ * version is recorded on its own.
  */
-export const FIND_SKILL_TOOL = {
-  name: 'find_skill',
-  description:
-    'Finds which installed skill fits a sub-task. The skill listing names most skills without a description; ' +
-    'this tool reads their descriptions and SKILL.md and answers with at most one skill, to load with the Skill tool, or none. ' +
-    'Call it when a new sub-task starts partway through the work (the next step of a plan, a new kind of file, tool or service), ' +
-    'and before you hand the user something whose shape a team may have rules for: a query or command for them to run, ' +
-    'a document, a diagram, a config. Skip it when a loaded skill already covers the step. Pass the sub-task in one sentence.',
-  inputSchema: {
-    type: 'object',
-    properties: { task: { type: 'string', description: 'The sub-task, in one sentence.' } },
-    required: ['task'],
-  },
-} as const
+export function policyId(config: PolicyConfig, excerptChars: number): string {
+  const sample: Candidate = { name: 's', description: 'd', detail: 'd' }
+  return shortHash(
+    JSON.stringify([
+      wideQuestions('typesafe', [sample]),
+      rerankQuestions('typesafe', [sample]),
+      config,
+      excerptChars,
+      VAGUE_TASK,
+      VAGUE_FITS,
+      REQUEST_HEAD_CHARS,
+      REQUEST_TAIL_CHARS,
+      MAX_ATTACHED_CHARS,
+      // The rules themselves, which have no constant to read.
+      String(mentionedSkill),
+      String(attachable),
+      String(injectionBlock),
+    ]),
+  )
+}
+
+/** FNV-1a of `text`, as eight hex digits. */
+export function shortHash(text: string): string {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193)
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
+/** How a prompt's pick reaches the model. */
+export type InjectArm = 'content' | 'suggest' | 'off'
+
+/**
+ * The arm of the injection trial a session falls in, by its id, so a session
+ * stays in one arm and the split needs no stored state. See `injectTrial`.
+ */
+export function trialArm(sessionId: string): InjectArm {
+  return (['content', 'suggest', 'off'] as const)[parseInt(shortHash(sessionId), 16) % 3] as InjectArm
+}
 
 /** What the requests answered for one decision, kept for the record file. */
 export interface Trace {
@@ -922,12 +993,13 @@ export interface Trace {
   ms: number
   /** The model version that answered, so a shift in scores can be told from an alias moving. */
   model: string | null
+  /** Why a request gave no answer: `ranking timeout`, `rerank 503`, `rerank error`. */
+  failure: string | null
 }
 
 /** One decision as the record file keeps it. */
 export interface Decision {
-  /** Where the text came from: the person's prompt, or the model's find_skill. */
-  source: 'prompt' | 'find_skill'
+  source: 'prompt'
   text: string
   /** The turn before, as sent beside the text. */
   context: RecentContext | null
@@ -936,8 +1008,11 @@ export interface Decision {
   /** False when a request failed or timed out. */
   answered: boolean
   trace: Trace | null
-  /** The subagent that called find_skill, when one did. */
-  agentId?: string
+  /** How the pick reached the model, and the characters of SKILL.md that went with it. */
+  inject?: InjectArm
+  attachedChars?: number
+  /** A hash of the skills offered, since a score depends on what the rest of the list is. */
+  catalog?: string
 }
 
 /**
@@ -945,35 +1020,22 @@ export interface Decision {
  * ranking's top five, so a wrong pick can be read back and replayed later; or
  * a skill the model loaded, with the pick it was made under.
  */
-export function recordLine(at: number, entry: Decision | { loaded: string; suggested: string | null }): string {
+export function recordLine(at: number, entry: Decision | { loaded: string; suggested: string | null }, policy: string): string {
   const time = new Date(at).toISOString()
   if ('loaded' in entry) return `${JSON.stringify({ at: time, ...entry })}\n`
   const { trace, ...rest } = entry
   return `${JSON.stringify({
     at: time,
     ...rest,
+    policy,
     ms: trace?.ms ?? 0,
     model: trace?.model ?? null,
+    failure: trace?.failure ?? null,
     gate: trace?.wide?.gate ?? null,
     gateValues: trace?.wide?.gateValues ?? {},
-    top: trace?.wide?.ranked.slice(0, 5) ?? [],
+    top: trace?.wide?.ranked.slice(0, 10) ?? [],
     rerank: trace?.rerank ? { winner: trace.rerank.winner, confidence: trace.rerank.confidence, fits: trace.rerank.fits } : null,
   })}\n`
-}
-
-/**
- * What `find_skill` answers: the pick with the description the listing left
- * out, a plain "none", or that the lookup failed, which is not a "none". Never
- * a SKILL.md: the model loads the skill with the Skill tool, which re-attaches
- * it after a compaction.
- */
-export function findSkillResult(pick: Skill | null | 'unavailable'): string {
-  if (pick === 'unavailable') return 'The skill lookup is unavailable right now (it failed or timed out); the skill listing still names every skill.'
-  if (!pick) return 'No installed skill fits this sub-task.'
-  return [
-    line(pick),
-    `Load it with the Skill tool (skill: "${pick.name}") if it fits the sub-task; ignore it if it does not.`,
-  ].join('\n')
 }
 
 /** A number for the log, or `n/d` when the backend reported none. */

@@ -10,7 +10,6 @@ import {
   describeSetup,
   describeStatus,
   describeWide,
-  findSkillResult,
   detailOf,
   modelInvocable,
   endpoint,
@@ -21,6 +20,10 @@ import {
   pluginFileCandidates,
   readRerank,
   readWide,
+  attachable,
+  mentionedSkill,
+  policyId,
+  trialArm,
   recentContextOf,
   rerankQuestions,
   REQUEST_HEAD_CHARS,
@@ -150,7 +153,7 @@ test('the first request ranks every skill and asks the three gate nouls, boolean
     'gate::prose_suffices',
     'gate::names_its_task',
   ])
-  expect(Object.keys(typesafe.which?.criteria ?? {})).toEqual(['commit', 'pptx-author', 'powerpoint', 'pdf'])
+  expect(Object.keys(typesafe.which?.criteria ?? {})).toEqual(['none', 'commit', 'pptx-author', 'powerpoint', 'pdf'])
   expect(typesafe.which?.criteria?.pdf).toContain('pdf')
   expect(typesafe['gate::prose_suffices']?.type).toBe('noul')
   const gateway = wideQuestions('gateway', skills) as Record<string, { type: string }>
@@ -227,7 +230,7 @@ test('a message that leans on earlier turns needs a closer fit before anything i
     gateValues: named === undefined ? {} : { names_its_task: named },
   })
   const fit = (value: number) => ({ winner: 'powerpoint', confidence: 0.9, fits: { powerpoint: value } })
-  expect(decide(followUp(0.1), fit(0.7), skills, config)).toEqual({ name: null, reason: 'nothing fits, best 0.70 < 0.8' })
+  expect(decide(followUp(0.1), fit(0.7), skills, config)).toEqual({ name: null, reason: 'nothing fits, best 0.70 < 0.85' })
   expect(decide(followUp(0.1), fit(0.9), skills, config).name).toBe('powerpoint')
   // A message that names its task, or no gate asked at all, keeps the usual threshold.
   expect(decide(followUp(0.6), fit(0.7), skills, config).name).toBe('powerpoint')
@@ -552,19 +555,6 @@ test('only a file with the backup\'s own shape is treated as a reusable backup',
   expect(validBackup('[]')).toBe(false)
 })
 
-test('findSkillResult names the pick with its description for the Skill tool, and says none plainly', () => {
-  const text = findSkillResult({ name: 'pdf', description: 'Read and edit PDF files' })
-  expect(text).toContain('- pdf: Read and edit PDF files')
-  expect(text).toContain('skill: "pdf"')
-  expect(findSkillResult(null)).toBe('No installed skill fits this sub-task.')
-  expect(findSkillResult('unavailable')).toContain('unavailable')
-})
-
-test('the ranking can leave the gate out, and then the gate passes', () => {
-  const questions = wideQuestions('typesafe', [{ name: 'a', description: 'A' }], { askGate: false })
-  expect(Object.keys(questions)).toEqual(['which'])
-})
-
 test('the recent context is the turn before the prompt: the prompt itself is skipped, long text is cut', () => {
   const messages = [
     { role: 'user' as const, text: 'write the SQL' },
@@ -575,8 +565,6 @@ test('the recent context is the turn before the prompt: the prompt itself is ski
   expect(context?.previous_user_message).toBe('write the SQL')
   expect(context?.assistant_reply.length).toBe(600)
   expect(context?.assistant_reply.endsWith('SELECT 1')).toBe(true)
-  // Mid-turn, the prompt being worked on is the context.
-  expect(recentContextOf(messages, null)?.previous_user_message).toBe('查無資料ㄟ 為什麼？？')
   expect(recentContextOf([], 'hi')).toBeNull()
 })
 
@@ -620,4 +608,57 @@ test('with the whole top three barred, the fourth is not suggested in their plac
   const { candidates, offered } = rerankCandidates(wide, skills, 3, (name) => name === 'pdf')
   expect(candidates).toEqual([])
   expect(decide(wide, null, offered, config, { rerankOn: true })).toEqual({ name: null, reason: 'no rerank read the pick' })
+})
+
+test('a /name past the first word picks that skill; paths, files, pastes and unknown names do not', () => {
+  const skills = [
+    { name: 'code-review', description: '' },
+    { name: 'tools:pdf', description: '' },
+    { name: 'a:dup', description: '' },
+    { name: 'b:dup', description: '' },
+  ]
+  const named = (text: string) => mentionedSkill(text, skills)?.name ?? null
+  expect(named('幫我修完 /code-review')).toBe('code-review')
+  expect(named('請用/code-review，然後推')).toBe('code-review')
+  expect(named('轉一下 /pdf')).toBe('tools:pdf')
+  expect(named('轉一下 /tools:pdf')).toBe('tools:pdf')
+  expect(named('跑 /dup')).toBeNull()
+  expect(named('看 /nope 和 /code-review')).toBe('code-review')
+  expect(named('看 src/code-review 和 /tmp/code-review')).toBeNull()
+  expect(named('看 /code-review.md')).toBeNull()
+  expect(named('<pasted_content id="1">/code-review</pasted_content id="1"> 這是什麼')).toBeNull()
+})
+
+test('policyId moves with the thresholds, so records from before a change can be told apart', () => {
+  const config = { shortlist: 8, gateThreshold: 0.3, fitsThreshold: 0.6 }
+  expect(policyId(config, 700)).toBe(policyId({ ...config }, 700))
+  expect(policyId(config, 700)).not.toBe(policyId({ ...config, fitsThreshold: 0.5 }, 700))
+  expect(policyId(config, 700)).not.toBe(policyId(config, 500))
+})
+
+test('a ranking that puts none first stops there, and none is never shortlisted', () => {
+  const skills = [{ name: 'a', description: 'A' }]
+  const config = { shortlist: 8, gateThreshold: 0.3, fitsThreshold: 0.6 }
+  const asked = wideQuestions('typesafe', skills) as { which: { criteria: Record<string, string> } }
+  expect(Object.keys(asked.which.criteria)).toEqual(['none', 'a'])
+  const wide = { ranked: [{ name: 'none', probability: 0.6 }, { name: 'a', probability: 0.4 }], gate: 0.9, gateValues: {} }
+  expect(passesGate(wide, config)).toBe(false)
+  expect(decide(wide, null, skills, config).reason).toBe('the ranking chose none')
+  const second = { ...wide, ranked: [wide.ranked[1], wide.ranked[0]] as typeof wide.ranked }
+  expect(passesGate(second, config)).toBe(true)
+  expect(shortlistOf(second, skills, 8).map((skill) => skill.name)).toEqual(['a'])
+})
+
+test('a SKILL.md goes in as text only when text is all it needs and it is not long', () => {
+  expect(attachable('---\nname: a\n---\nDo the thing.')).toBe(true)
+  expect(attachable('---\nallowed-tools: Bash\n---\nDo the thing.')).toBe(false)
+  expect(attachable('Use $ARGUMENTS here.')).toBe(false)
+  expect(attachable('Today is !`date`.')).toBe(false)
+  expect(attachable('x'.repeat(10_001))).toBe(false)
+})
+
+test('a session stays in one trial arm, and the arms all occur', () => {
+  expect(trialArm('s1')).toBe(trialArm('s1'))
+  const arms = new Set(Array.from({ length: 50 }, (_, i) => trialArm(`session-${i}`)))
+  expect([...arms].sort()).toEqual(['content', 'off', 'suggest'])
 })

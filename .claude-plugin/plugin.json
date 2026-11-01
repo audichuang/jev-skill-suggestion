@@ -1,7 +1,7 @@
 {
   "name": "jev-skill-suggestion",
-  "version": "0.7.6",
-  "description": "Keeps the skill listing out of the context window and lets TypeSafe's Jev, a System One decision model, pick at most one skill per prompt from the skills' descriptions, the way TypeSafe's skill-suggestion cookbook does: one request ranks every skill and asks whether the prompt needs a skill at all, a second re-reads the top three with their SKILL.md and can reject them all. The winner's SKILL.md is attached to the prompt, and /jev-skill-suggestion:setup lists every skill by name only, so the model can still load any of them, including one skill that names another. Falls back to the engine's built-in classifier when no key is set.",
+  "version": "0.8.0",
+  "description": "Keeps the skill listing out of the context window and lets TypeSafe's Jev, a System One decision model, pick at most one skill per prompt from the skills' descriptions, the way TypeSafe's skill-suggestion cookbook does: one request ranks every skill and asks whether the prompt needs a skill at all, a second re-reads the top eight with their SKILL.md and can reject them all. The winner's SKILL.md is attached to the prompt, and /jev-skill-suggestion:setup lists every skill by name only, so the model can still load any of them, including one skill that names another. Falls back to the engine's built-in classifier when no key is set.",
   "author": {
     "name": "audichuang",
     "url": "https://github.com/audichuang"
@@ -92,19 +92,19 @@
       "type": "number",
       "title": "Shortlist size",
       "description": "How many of the ranking the second request re-reads",
-      "default": 3
+      "default": 8
     },
     "gateThreshold": {
       "type": "number",
       "title": "Needs-a-skill threshold",
       "description": "Mean of the three request nouls (acts on the user's system, would follow a documented procedure, prose does not suffice) under which nothing is suggested",
-      "default": 0.3
+      "default": 0.2
     },
     "fitsThreshold": {
       "type": "number",
       "title": "Fits threshold",
       "description": "A shortlist whose best per-skill \"does this fit\" noul is under this is dropped entirely",
-      "default": 0.5
+      "default": 0.6
     },
     "excerptChars": {
       "type": "number",
@@ -128,7 +128,7 @@
       "type": "number",
       "title": "Ranking latency budget (ms)",
       "description": "How long to wait for the first request (the ranking) before letting the prompt through without a suggestion",
-      "default": 800
+      "default": 1000
     },
     "rerankTimeoutMs": {
       "type": "number",
@@ -136,11 +136,11 @@
       "description": "How long to wait for the second request, which reads each shortlisted SKILL.md, before suggesting nothing",
       "default": 2500
     },
-    "findSkill": {
+    "injectTrial": {
       "type": "boolean",
-      "title": "find_skill tool",
-      "description": "Give the model a find_skill tool it can call mid-turn, when a sub-task the prompt's suggestion did not cover turns up; it answers with at most one skill, by the same two requests, for the Skill tool to load; offered only with a TypeSafe or Gateway key and rerank on",
-      "default": true
+      "title": "Injection trial",
+      "description": "Split sessions by id into three arms (attach the skill, name it, or nothing) and record which, to measure whether a suggestion helps. A third of sessions get no suggestion while this is on.",
+      "default": false
     },
     "logDecisions": {
       "type": "boolean",

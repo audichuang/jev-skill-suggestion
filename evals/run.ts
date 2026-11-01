@@ -2,7 +2,7 @@
  * Replays evals/cases.jsonl through the mod's own two requests and policy,
  * against the skills installed on this machine, and scores each pick.
  *
- *   bun evals/run.ts [--model jev-1.13.0] [--gate 0.3] [--fits 0.5] [--reverse] [--cases …]
+ *   bun evals/run.ts [--model jev-1.13.0] [--gate 0.2] [--fits 0.6] [--shortlist 8] [--reverse] [--cases …]
  *                    [--project ~/code/app] [--no-context]
  *
  * The requests are built by hooks/policy.ts, so a change to a question there
@@ -20,6 +20,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import {
   DEFAULT_BASE_URL,
   DEFAULT_EXCERPT_CHARS,
+  DEFAULT_FITS_THRESHOLD,
+  DEFAULT_SHORTLIST,
   DEFAULT_MODEL,
   VAGUE_FITS,
   configDirOf,
@@ -28,6 +30,7 @@ import {
   decide,
   detailOf,
   endpoint,
+  mentionedSkill,
   modelInvocable,
   modelOf,
   passesGate,
@@ -59,9 +62,9 @@ const noContext = process.argv.includes('--no-context')
 const apiKey = process.env.TYPESAFE_API_KEY ?? ''
 if (!apiKey) throw new Error('TYPESAFE_API_KEY is not set')
 const policy: PolicyConfig = {
-  shortlist: 3,
-  gateThreshold: Number(arg('gate', '0.3')),
-  fitsThreshold: Number(arg('fits', '0.5')),
+  shortlist: Number(arg('shortlist', String(DEFAULT_SHORTLIST))),
+  gateThreshold: Number(arg('gate', '0.2')),
+  fitsThreshold: Number(arg('fits', String(DEFAULT_FITS_THRESHOLD))),
   vagueFits: Number(arg('vague-fits', String(VAGUE_FITS))),
 }
 
@@ -77,7 +80,7 @@ const enabled: Record<string, boolean> = JSON.parse(settingsJson).enabledPlugins
 const files = new Map<string, string>()
 const skills: Skill[] = []
 const add = (name: string, file: string) => {
-  if (off.has(name) || files.has(name)) return
+  if (off.has(name) || off.has(name.slice(name.lastIndexOf(':') + 1)) || files.has(name)) return
   const markdown = readFileSync(file, 'utf8')
   const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)
   const description = front ? String((Bun.YAML.parse(front[1] as string) as { description?: unknown })?.description ?? '') : ''
@@ -141,6 +144,17 @@ for (const c of cases) {
     console.log(
       `${ok ? 'ok  ' : 'MISS'} skip (not routed) pick -  want ${c.expect.map((e) => e ?? '-').join('|')}\n     ${c.text.slice(0, 70)}`,
     )
+    continue
+  }
+  // Named in the prompt: the hook asks no model either.
+  const named = mentionedSkill(c.text, skills)
+  if (named && invocable(named.name)) {
+    const ok = c.expect.includes(named.name)
+    if (ok) tally.right++
+    else if (c.expect.every((name) => name === null)) tally.falsePositive++
+    else tally.wrongSkill++
+    gates.push({ want: !c.expect.includes(null), gate: null, fits: null })
+    console.log(`${ok ? 'ok  ' : 'MISS'} named in the prompt pick ${named.name}  want ${c.expect.map((e) => e ?? '-').join('|')}\n     ${c.text.slice(0, 70)}`)
     continue
   }
   const wideAnswer = await ask(c.text, wideQuestions('typesafe', skills), context)

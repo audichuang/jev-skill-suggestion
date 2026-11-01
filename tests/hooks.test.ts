@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
-import type { EngineInterface, Hook, Next, On, PromptSubmitInput, PromptAttachmentInput, SessionStartInput, SkillPromptInput, ToolCallInput, ToolDescribeInput } from 'claude-code'
+import type { EngineInterface, Hook, Next, On, PromptSubmitInput, PromptAttachmentInput, SkillPromptInput } from 'claude-code'
 import { register } from '../hooks/jev-skill-suggestion.ts'
+import { trialArm } from '../hooks/policy.ts'
 
 /**
  * The mod registered with `options`, driven through its hooks against a `$`
@@ -8,7 +9,7 @@ import { register } from '../hooks/jev-skill-suggestion.ts'
  */
 function seat(
   options: Record<string, unknown>,
-  world: { env?: Record<string, string>; files?: Record<string, string>; fits?: number; gate?: number; down?: boolean; raw?: (request: 'ranking' | 'rerank') => string | undefined },
+  world: { sid?: string; env?: Record<string, string>; files?: Record<string, string>; fits?: number; gate?: number; down?: boolean; raw?: (request: 'ranking' | 'rerank') => string | undefined },
 ) {
   const hooks: Record<string, unknown> = {}
   // A matcher, when given, sits between the event and the hook.
@@ -19,7 +20,6 @@ function seat(
 
   const auth: string[] = []
   const bodies: string[] = []
-  const registered: string[] = []
   const files = world.files ?? {}
   const $ = {
     command: { list: async () => [{ name: 'test-runner', description: 'Fix failing tests', source: 'user' }] },
@@ -56,26 +56,17 @@ function seat(
     env: { get: async (name: string) => (world.env ?? {})[name] },
     session: {
       cwd: async () => '/work',
-      id: async () => 's1',
+      id: async () => world.sid ?? 's1',
       messages: async () => [
         { role: 'user', text: 'the CI run is red', toolUses: [] },
         { role: 'assistant', text: 'Three tests fail in parser.test.ts.', toolUses: [] },
       ],
-    },
-    tool: {
-      register: async (spec: { name: string }) => (registered.push(spec.name), { tool: `mcp__jev__${spec.name}` }),
     },
     ui: { log: () => {}, status: () => {} },
   } as unknown as EngineInterface
   const next = (async (e: PromptSubmitInput) => e) as unknown as Next<'prompt.submit'>
   const ask = (text: string) => submit($, { text, wait: false, origin: { kind: 'composer' } }, next)
   const pass = (async (e: unknown) => e) as never
-  const start = () => (hooks['session.start'] as Hook<'session.start'>)($, {} as SessionStartInput, pass)
-  const describe = (tool: string) =>
-    (hooks['tool.describe'] as Hook<'tool.describe'>)($, { tool, description: 'd' } as ToolDescribeInput, pass)
-  // The fakes stand in for engine events only in the fields the mod reads.
-  const call = (e: Record<string, unknown>) =>
-    (hooks['tool.call'] as Hook<'tool.call'>)($, { tool_use_id: 't', ...e } as unknown as ToolCallInput, pass)
   const listing = (text: string, agentId?: string) =>
     (hooks['prompt.attachment'] as Hook<'prompt.attachment'>)(
       $,
@@ -85,7 +76,7 @@ function seat(
   const load = (skill: string) =>
     (hooks['skill.prompt'] as Hook<'skill.prompt'>)($, { skill, text: '' } as unknown as SkillPromptInput, pass)
   const compact = () => (hooks['session.compact'] as Hook<'session.compact'>)($, {} as never, pass)
-  return { ask, auth, bodies, registered, start, describe, call, listing, load, compact, files }
+  return { ask, auth, bodies, listing, load, compact, files }
 }
 
 test('with no key option the key comes from TYPESAFE_API_KEY, and a bare go-ahead is never ranked', async () => {
@@ -129,73 +120,72 @@ test('a 200 whose body is not an object (null, 42, "x") fails open for the ranki
 })
 
 const LISTING = 'Skills:\n- test-runner'
-const FIND = { tool: 'mcp__jev__find_skill', task: 'fix the failing tests' }
-const text = (answer: unknown) => (typeof answer === 'object' && answer && 'result' in answer ? String(answer.result) : '')
 
-test('find_skill is registered at session start, kept out of ToolSearch, and answers with the pick for the Skill tool', async () => {
-  const { start, describe, call, listing, auth } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
-  await start()
-  const described = await describe('mcp__jev__find_skill')
-  expect('isDeferred' in described && described.isDeferred).toBe(false)
-  expect('isDeferred' in (await describe('Bash'))).toBe(false)
-
-  await listing(LISTING)
-  expect(text(await call(FIND))).toContain('skill: "test-runner"')
-  expect(auth.length).toBe(2)
-  const bash = { tool: 'Bash', command: 'ls' }
-  expect(await call(bash)).toEqual({ tool_use_id: 't', ...bash })
+test('a skill named past the first word is named back with no request to the backend, not attached', async () => {
+  const { ask, auth } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { '/home/u/.claude/skills/test-runner/SKILL.md': 'Run them.' } })
+  const out = await ask('修好再跑 /test-runner')
+  expect(auth.length).toBe(0)
+  const block = 'context' in out ? String(out.context) : ''
+  expect(block).toContain('skill: "test-runner"')
+  expect(block).not.toContain('Run them.')
 })
 
-test('find_skill is not offered with findSkill off, or with no backend to rerank its pick', async () => {
-  const off = seat({ findSkill: false, typesafeApiKey: 'k' }, {})
-  await off.start()
-  expect(off.registered).toEqual([])
-  const keyless = seat({}, {})
-  await keyless.start()
-  expect(keyless.registered).toEqual([])
-  const noRerank = seat({ typesafeApiKey: 'k', rerank: false }, {})
-  await noRerank.start()
-  expect(noRerank.registered).toEqual([])
+test('a long SKILL.md is named, not attached, and the record says how much went in', async () => {
+  const path = '/home/u/.claude/jev-skill-suggestion/decisions/s1.jsonl'
+  const big = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { '/home/u/.claude/skills/test-runner/SKILL.md': 'x'.repeat(10_001) } })
+  const out = await big.ask('fix the failing tests')
+  expect(String('context' in out ? out.context : '')).not.toContain('xxxx')
+  expect(JSON.parse((big.files[path] as string).trim())).toMatchObject({ inject: 'content', attachedChars: 0, pick: 'test-runner' })
+  const small = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { '/home/u/.claude/skills/test-runner/SKILL.md': 'Run them.' } })
+  await small.ask('fix the failing tests')
+  expect(JSON.parse((small.files[path] as string).trim()).attachedChars).toBe(9)
 })
 
-test('find_skill skips the gate a prompt must pass: the model calling it already wants a skill', async () => {
-  const { ask, start, call, listing } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, gate: 0.1 })
-  const prompted = await ask('fix the failing tests')
-  expect('context' in prompted ? prompted.context : undefined).toBeUndefined()
-  await start()
-  await listing(LISTING)
-  expect(text(await call(FIND))).toContain('skill: "test-runner"')
-})
-
-test('find_skill says the lookup is unavailable, not "none", when a request fails or no listing was seen', async () => {
+test('a failed request records why', async () => {
+  const path = '/home/u/.claude/jev-skill-suggestion/decisions/s1.jsonl'
   const down = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, down: true })
-  await down.start()
-  await down.listing(LISTING)
-  expect(text(await down.call(FIND))).toContain('unavailable')
+  await down.ask('fix the failing tests')
+  expect(JSON.parse((down.files[path] as string).trim())).toMatchObject({ answered: false, failure: 'ranking 503' })
+})
 
-  const unlisted = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' } })
-  await unlisted.start()
-  await unlisted.listing(LISTING, 'subagent-1')
-  expect(text(await unlisted.call(FIND))).toContain('unavailable')
+test('the trial attaches, names or sends nothing by session, and records the pick either way', async () => {
+  const ids = Array.from({ length: 30 }, (_, i) => `session-${i}`)
+  const seen = new Set<string>()
+  for (const sid of ids) {
+    const { ask, files } = seat({ typesafeApiKey: 'k', injectTrial: true }, { sid, env: { HOME: '/home/u' }, files: { '/home/u/.claude/skills/test-runner/SKILL.md': 'Run them.' } })
+    const out = await ask('fix the failing tests')
+    const line = JSON.parse((files[`/home/u/.claude/jev-skill-suggestion/decisions/${sid}.jsonl`] as string).trim())
+    const block = 'context' in out ? String(out.context) : ''
+    expect(line.inject).toBe(trialArm(sid))
+    expect(line.pick).toBe('test-runner')
+    if (line.inject === 'off') expect('context' in out ? out.context : undefined).toBeUndefined()
+    if (line.inject === 'content') expect(block).toContain('Run them.')
+    if (line.inject === 'suggest') expect(block).toContain('test-runner')
+    seen.add(line.inject)
+  }
+  expect(seen.size).toBe(3)
+})
+
+test('a named skill the model may not invoke is not attached', async () => {
+  const { ask } = seat({ typesafeApiKey: 'k' }, { env: { HOME: '/home/u' }, files: { '/home/u/.claude/skills/test-runner/SKILL.md': '---\ndisable-model-invocation: true\n---\nRun them.' } })
+  const out = await ask('修好再跑 /test-runner')
+  expect('context' in out ? out.context : undefined).toBeUndefined()
 })
 
 test('every decision and every load goes to the session record file, appended to what a resumed session left', async () => {
   const path = '/home/u/.claude/jev-skill-suggestion/decisions/s1.jsonl'
-  const { ask, start, listing, call, load, files } = seat(
+  const { ask, load, files } = seat(
     { typesafeApiKey: 'k' },
     { env: { HOME: '/home/u' }, files: { [path]: '{"earlier":true}\n' } },
   )
   await ask('fix the failing tests')
-  await start()
-  await listing(LISTING)
-  await call(FIND)
   await load('test-runner')
   const lines = (files[path] as string).trim().split('\n').map((line) => JSON.parse(line))
   expect(lines[0]).toEqual({ earlier: true })
   expect(lines[1]).toMatchObject({ source: 'prompt', text: 'fix the failing tests', pick: 'test-runner', answered: true, model: 'jev-1.13.0' })
   expect(lines[1].top[0].name).toBe('test-runner')
-  expect(lines[2]).toMatchObject({ source: 'find_skill', pick: 'test-runner' })
-  expect(lines[3]).toMatchObject({ loaded: 'test-runner', suggested: 'test-runner' })
+  expect(lines[1].policy).toMatch(/^[0-9a-f]{8}$/)
+  expect(lines[2]).toMatchObject({ loaded: 'test-runner', suggested: 'test-runner' })
 
   const off = seat({ typesafeApiKey: 'k', recordDecisions: false }, { env: { HOME: '/home/u' } })
   await off.ask('fix the failing tests')
